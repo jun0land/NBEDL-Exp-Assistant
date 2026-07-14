@@ -11,7 +11,7 @@ from streamlit_extras.colored_header import colored_header
 from streamlit_extras.metric_cards import style_metric_cards
 
 # ==========================================
-# 1. 페이지 기본 설정 및 이탈 방지 (+ 자동완성 차단)
+# 1. 페이지 기본 설정 및 이탈 방지
 # ==========================================
 st.set_page_config(page_title="NBEDL Exp Assistant", layout="wide")
 
@@ -34,7 +34,7 @@ components.html(
 )
 
 # ==========================================
-# 2. 이미지 Base64 인코딩 & iOS Liquid Glass CSS
+# 2. 이미지 Base64 인코딩 & iOS Liquid Glass CSS (오류 완벽 수정)
 # ==========================================
 def get_base64_of_bin_file(bin_file):
     if os.path.exists(bin_file):
@@ -50,12 +50,19 @@ logo_html = f'<img src="data:image/png;base64,{logo_base64}" height="42" style="
 
 custom_css = f"""
 <style>
-/* 전역 글꼴 Pretendard (네온/그림자 효과 완벽 삭제) */
+/* ✅ 1. 폰트 충돌(꺽쇠 아이콘 깨짐) 완전 해결 */
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
-* {{ font-family: 'Pretendard', sans-serif !important; }}
+
+/* 무식한 * 태그 대신, 텍스트가 들어가는 주요 태그에만 명시적 적용 */
+html, body, .stApp, p, span, h1, h2, h3, h4, h5, h6, label, input, button, select {{
+    font-family: 'Pretendard', sans-serif;
+}}
+/* 스트림릿 내부 아이콘은 원래 폰트를 유지하도록 절대 보호 */
+.material-icons, .material-symbols-rounded, [class^="stIcon"], span[class*="icon"], svg, path {{
+    font-family: 'Material Symbols Rounded', 'Material Icons', sans-serif !important;
+}}
 
 .stApp {{
-    /* 배경이 너무 어둡지 않도록 화이트 오버레이 추가 */
     background: linear-gradient(135deg, rgba(255,255,255,0.45), rgba(255,255,255,0.25)), url("data:image/png;base64,{bg_base64}");
     background-size: cover;
     background-position: center;
@@ -65,33 +72,41 @@ custom_css = f"""
 
 header[data-testid="stHeader"] {{ background: transparent !important; }}
 
-/* ✅ 공통 유리 블럭 (Liquid Glass) 스타일 */
-.glass-block, [data-testid="stForm"], [data-testid="stExpander"], .title-glass-container, [data-testid="stVegaLiteChart"] {{
-    background: rgba(255, 255, 255, 0.45) !important;
-    backdrop-filter: blur(24px) saturate(150%) !important;
-    -webkit-backdrop-filter: blur(24px) saturate(150%) !important;
-    border: 1px solid rgba(255, 255, 255, 0.7) !important;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08), inset 0 1px 2px rgba(255,255,255,0.6) !important;
-    border-radius: 12px !important; /* 날렵한 곡률 유지 */
+h1, h2, h3, h4, h5, h6, label {{
+    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.9), 0 0 6px rgba(255, 255, 255, 0.6);
 }}
 
-/* ✅ 타이틀 전용 배경 (그라데이션 없애고 단단한 블럭화) */
+/* 메인 유리 블럭 컨테이너들 */
+[data-testid="stForm"], 
+[data-testid="stExpander"], 
+[data-testid="stVerticalBlockBorderWrapper"], 
+.title-glass-container {{
+    background: rgba(255, 255, 255, 0.35) !important;
+    backdrop-filter: blur(24px) saturate(150%) !important;
+    -webkit-backdrop-filter: blur(24px) saturate(150%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.6) !important;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08), inset 0 1px 2px rgba(255,255,255,0.8) !important;
+    border-radius: 16px !important; 
+    padding: 24px;
+    margin-bottom: 16px;
+}}
+
+/* 사이드바 예외 처리 (블럭 중첩 오류 방지) */
+[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {{
+    background: transparent !important; border: none !important; box-shadow: none !important; padding: 0 !important;
+}}
+
 .title-glass-container {{
     padding: 16px 24px;
     margin-bottom: 24px;
     margin-top: -10px;
     display: flex;
     align-items: center;
-    border-left: 6px solid #ed542b !important; /* 포인트 컬러 엣지 */
+    border-left: 6px solid #ed542b !important; 
 }}
-.title-glass-container h2 {{ 
-    margin: 0; color: #1a1a1a; font-weight: 800; padding: 0; line-height: 1.1; display: flex; align-items: center; 
-}}
+.title-glass-container h2 {{ margin: 0; padding: 0; line-height: 1.1; display: flex; align-items: center; }}
 
-/* 메인 폼, 익스팬더 패딩 설정 */
-[data-testid="stForm"], [data-testid="stExpander"] {{ padding: 24px; }}
-
-/* 상단 탭(Tabs) - iOS 세그먼트 컨트롤 스타일 */
+/* 탭(Tabs) 영역 */
 [data-testid="stTabs"] [data-baseweb="tab-list"] {{
     background: rgba(255, 255, 255, 0.35);
     backdrop-filter: blur(16px);
@@ -109,29 +124,23 @@ header[data-testid="stHeader"] {{ background: transparent !important; }}
     font-weight: 800 !important;
     font-size: 1.05rem !important;
 }}
+
+/* ✅ 2. 활성화된 탭(Tabs) 투명 유리 질감으로 변경 */
 [data-testid="stTabs"] [aria-selected="true"] {{
-    background: rgba(255, 255, 255, 0.95) !important;
+    /* 단색 배경 대신 투명도 높은 그라데이션 및 블러 적용 */
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.2)) !important; 
+    backdrop-filter: blur(16px) saturate(120%) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(120%) !important;
     color: #ed542b !important;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08) !important;
+    border: 1px solid rgba(255, 255, 255, 0.6) !important;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.05), inset 0 1px 2px rgba(255,255,255,0.7) !important;
 }}
 
-/* ✅ 라벨과 입력칸을 통째로 묶는 개별 유리 블럭 컨테이너 */
-[data-testid="stForm"] [data-testid="column"] {{
-    background: rgba(255, 255, 255, 0.35);
-    backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.7);
-    border-radius: 10px;
-    padding: 16px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04), inset 0 1px 2px rgba(255, 255, 255, 0.8);
-    margin-bottom: 12px;
-}}
-
-/* ✅ 내부 입력칸(Input) - 진짜 유리처럼 매끄럽게 */
 div[data-baseweb="input"], div[data-baseweb="select"] > div {{
-    background: rgba(255,255,255,0.7) !important; 
+    background: rgba(255, 255, 255, 0.75) !important; 
     border-radius: 8px !important; 
-    border: 1px solid rgba(255,255,255,0.9) !important;
-    box-shadow: inset 0 2px 4px rgba(0,0,0,0.02) !important;
+    border: 1px solid rgba(255, 255, 255, 1.0) !important;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.02), 0 2px 6px rgba(0,0,0,0.03) !important;
     transition: all 0.2s ease !important;
     overflow: hidden !important; 
 }}
@@ -142,7 +151,16 @@ div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-w
 }}
 div[data-baseweb="input"] > div {{ background: transparent !important; border: none !important; }}
 
-/* ✅ 파일 업로더 컴포넌트 안전망 (버튼 글씨 겹침 해결) */
+[data-testid="stForm"] [data-testid="column"] {{
+    background: rgba(255, 255, 255, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03), inset 0 1px 2px rgba(255, 255, 255, 0.6);
+    margin-bottom: 12px;
+}}
+
+/* ✅ 3. Upload 버튼 글씨 겹침 해결: 업로더 영역 CSS 완전 초기화 */
 [data-testid="stFileUploader"] {{
     background: rgba(255, 255, 255, 0.35);
     backdrop-filter: blur(12px);
@@ -151,32 +169,46 @@ div[data-baseweb="input"] > div {{ background: transparent !important; border: n
     padding: 16px;
 }}
 [data-testid="stFileUploader"] section {{ background: transparent !important; }}
-[data-testid="stFileUploader"] button {{ padding: 0.25rem 0.75rem !important; }} /* 내부버튼 보호 */
 
-/* 오렌지 버튼 (업로더 제외) */
-.stButton > button {{
+/* 업로더 내부 버튼은 투명하고 단순하게 리셋하여 이중 렌더링 겹침 방지 */
+[data-testid="stFileUploader"] button {{
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}}
+
+/* 메인 버튼 스타일을 stFileUploader 밖으로 격리 (div.stButton 로 명확히 타겟팅) */
+div.stButton > button {{
     border-radius: 8px !important; 
-    border: 1px solid rgba(255,255,255,0.7) !important;
+    border: 1px solid rgba(255,255,255,0.8) !important;
     background: rgba(255,255,255,0.6) !important;
     font-weight: 700 !important;
     color: #1a1a1a !important;
     box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important;
     transition: all 0.2s ease !important;
 }}
-.stButton > button[kind="primary"] {{
+div.stButton > button[kind="primary"] {{
     background: linear-gradient(135deg, #ed542b, #f68b21) !important;
     border: none !important;
     color: white !important;
     box-shadow: 0 6px 16px rgba(237,84,43,0.3) !important;
 }}
-.stButton > button:hover {{
-    transform: translateY(-1px);
+div.stButton > button:hover {{
+    transform: translateY(-2px);
     box-shadow: 0 8px 20px rgba(17,24,39,0.1) !important;
 }}
 
-/* 차트 컨테이너 (여백 넉넉히 주어 그래프 짤림 방지) */
+/* ✅ 4. 차트 배경 문제 해결: 배경 완전히 날리고 캔버스에만 곡률 부여 */
 [data-testid="stVegaLiteChart"] {{
-    padding: 16px !important; 
+    background: transparent !important; 
+    border: none !important;
+    padding: 0 !important; 
+    box-shadow: none !important;
+    overflow: visible !important;
+}}
+/* 차트 내부 캔버스 테두리만 둥글게 */
+[data-testid="stVegaLiteChart"] canvas {{
+    border-radius: 12px !important;
     overflow: hidden !important;
 }}
 </style>
@@ -251,7 +283,6 @@ def load_excel_data(uploaded_file):
 # [화면 A] 실험 세팅 모드 (Setup)
 # ==========================================
 if st.session_state.app_mode == "Setup":
-    # 단단한 유리 블럭 타이틀
     st.markdown(f"""
     <div class="title-glass-container">
         {logo_html}
@@ -259,56 +290,59 @@ if st.session_state.app_mode == "Setup":
     </div>
     """, unsafe_allow_html=True)
     
-    uploaded_file = st.file_uploader("📂 기존 실험 엑셀(xlsx) 파일 업로드", type=["xlsx"])
-    if uploaded_file:
-        load_excel_data(uploaded_file)
-        st.rerun()
+    with st.container(border=True):
+        st.markdown("<h5 style='font-weight: 800;'>기존 실험 데이터 불러오기</h5>", unsafe_allow_html=True)
+        uploaded_file = st.file_uploader("엑셀(xlsx) 파일을 업로드하면 설정이 자동으로 채워집니다.", type=["xlsx"])
+        if uploaded_file:
+            load_excel_data(uploaded_file)
+            st.rerun()
     
-    st.divider()
-    
-    st.session_state.exp_name = st.text_input("📝 실험 프로젝트 이름 (엑셀 파일명으로 사용됩니다)", value=st.session_state.exp_name, placeholder="예: NBEDL_Experiment_01")
-    
-    col_t1, col_t2, col_t3 = st.columns(3)
-    target_name = col_t1.text_input("목표 지표 이름", value=st.session_state.target_info["name"], placeholder="예: J_sc")
-    target_dir = col_t2.selectbox("최적화 방향", ["Maximize", "Minimize"])
-    
-    passive_val = ",".join(st.session_state.passive_vars) if st.session_state.passive_vars else ""
-    passive_input = col_t3.text_input("환경 변수 (쉼표 구분)", value=passive_val, placeholder="예: 온도 (°C), 습도 (%)")
+    colored_header(label="기본 프로젝트 설정", description="실험 이름과 최적화 목표 지표를 설정하세요.", color_name="orange-70")
+    with st.container(border=True):
+        st.session_state.exp_name = st.text_input("📝 실험 프로젝트 이름", value=st.session_state.exp_name, placeholder="예: NBEDL_Experiment_01")
+        
+        col_t1, col_t2, col_t3 = st.columns(3)
+        target_name = col_t1.text_input("목표 지표 이름", value=st.session_state.target_info["name"], placeholder="예: J_sc")
+        target_dir = col_t2.selectbox("최적화 방향", ["Maximize", "Minimize"])
+        
+        passive_val = ",".join(st.session_state.passive_vars) if st.session_state.passive_vars else ""
+        passive_input = col_t3.text_input("환경 변수 (쉼표 구분)", value=passive_val, placeholder="예: 온도 (°C), 습도 (%)")
     
     colored_header(label="🔬 최적화 대상 공정 변수 입력", description="AI가 탐색할 공정 조건의 이름과 변수 범위를 지정하세요.", color_name="orange-70")
     
-    if st.button("➕ 공정 변수 추가"):
+    for i, var in enumerate(st.session_state.config_vars):
+        with st.container(border=True): 
+            c1, c_u, c2, c3, c4 = st.columns([2, 1, 2, 2, 2])
+            var["Name"] = c1.text_input(f"변수 {i+1} 이름", value=var.get("Name", ""), key=f"name_{i}", placeholder="예: 스핀코팅 속도1")
+            var["Unit"] = c_u.text_input("단위", value=var.get("Unit", ""), key=f"unit_{i}", placeholder="예: rpm")
+            
+            type_options = ["Real (실수)", "Integer (정수)", "Categorical (범주)"]
+            safe_type = var.get("Type", "Real (실수)")
+            if safe_type not in type_options: safe_type = "Real (실수)"
+                
+            var["Type"] = c2.selectbox("타입", type_options, key=f"type_{i}", index=type_options.index(safe_type))
+            
+            if "Real" in var["Type"]:
+                var["Min"] = c3.number_input("최소값", value=float(var.get("Min", 0.0)), key=f"rmin_{i}")
+                var["Max"] = c4.number_input("최대값", value=float(var.get("Max", 10.0)), key=f"rmax_{i}")
+                var["Options"] = ""
+            elif "Integer" in var["Type"]:
+                var["Min"] = c3.number_input("최소값", value=int(var.get("Min", 0)), step=1, key=f"imin_{i}")
+                var["Max"] = c4.number_input("최대값", value=int(var.get("Max", 100)), step=1, key=f"imax_{i}")
+                var["Options"] = ""
+            elif "Categorical" in var["Type"]:
+                var["Min"], var["Max"] = 0, 0
+                var["Options"] = c3.text_input("옵션 (쉼표 구분)", value=var.get("Options", ""), key=f"cat_{i}", placeholder="예: CB, Toluene")
+    
+    if st.button("➕ 공정 변수 블럭 추가", use_container_width=True):
         st.session_state.config_vars.append({
             "Old_Name": "", "Name": "", "Unit": "", "Type": "Real (실수)", 
             "Min": 0.0, "Max": 10.0, "Options": ""
         })
         st.rerun()
-        
-    for i, var in enumerate(st.session_state.config_vars):
-        c1, c_u, c2, c3, c4 = st.columns([2, 1, 2, 2, 2])
-        var["Name"] = c1.text_input(f"변수 {i+1} 이름", value=var.get("Name", ""), key=f"name_{i}", placeholder="예: 스핀코팅 속도1")
-        var["Unit"] = c_u.text_input("단위", value=var.get("Unit", ""), key=f"unit_{i}", placeholder="예: rpm")
-        
-        type_options = ["Real (실수)", "Integer (정수)", "Categorical (범주)"]
-        safe_type = var.get("Type", "Real (실수)")
-        if safe_type not in type_options: safe_type = "Real (실수)"
-            
-        var["Type"] = c2.selectbox("타입", type_options, key=f"type_{i}", index=type_options.index(safe_type))
-        
-        if "Real" in var["Type"]:
-            var["Min"] = c3.number_input("최소값", value=float(var.get("Min", 0.0)), key=f"rmin_{i}")
-            var["Max"] = c4.number_input("최대값", value=float(var.get("Max", 10.0)), key=f"rmax_{i}")
-            var["Options"] = ""
-        elif "Integer" in var["Type"]:
-            var["Min"] = c3.number_input("최소값", value=int(var.get("Min", 0)), step=1, key=f"imin_{i}")
-            var["Max"] = c4.number_input("최대값", value=int(var.get("Max", 100)), step=1, key=f"imax_{i}")
-            var["Options"] = ""
-        elif "Categorical" in var["Type"]:
-            var["Min"], var["Max"] = 0, 0
-            var["Options"] = c3.text_input("옵션 (쉼표 구분)", value=var.get("Options", ""), key=f"cat_{i}", placeholder="예: CB, Toluene")
-            
-    st.divider()
-    if st.button("🚀 실험 시작 및 대시보드 생성", type="primary"):
+
+    st.write("")
+    if st.button("🚀 실험 시작 및 대시보드 생성", type="primary", use_container_width=True):
         if not target_name.strip():
             st.error("목표 지표 이름을 입력해야 합니다.")
         elif not st.session_state.config_vars:
@@ -353,7 +387,6 @@ elif st.session_state.app_mode == "Dashboard":
     
     display_exp_name = st.session_state.exp_name if st.session_state.exp_name.strip() else "NBEDL_Experiment"
     
-    # 단단한 유리 블럭 타이틀
     st.markdown(f"""
     <div class="title-glass-container">
         {logo_html}
@@ -361,7 +394,6 @@ elif st.session_state.app_mode == "Dashboard":
     </div>
     """, unsafe_allow_html=True)
     
-    # --- 사이드바 ---
     with st.sidebar:
         st.header("📂 데이터 관리 패널")
         output = io.BytesIO()
@@ -387,12 +419,8 @@ elif st.session_state.app_mode == "Dashboard":
             st.session_state.clear()
             st.rerun()
 
-    # --- 메인 화면 탭(Tabs) ---
     tab1, tab2, tab3 = st.tabs(["📝 신규 실험 입력", "🗂️ 데이터베이스 관리", "🤖 AI 최적화 대시보드"])
 
-    # ----------------------------------------
-    # [Tab 1] 신규 데이터 입력 공간
-    # ----------------------------------------
     with tab1:
         colored_header(label="새로운 스플릿 실험 결과 입력", description="값을 모두 적은 후 하단 '데이터 추가' 버튼을 클릭하세요.", color_name="orange-70")
         
@@ -401,7 +429,6 @@ elif st.session_state.app_mode == "Dashboard":
             new_row = {"학습_적용": True}
             idx = 0
             
-            # 라벨 텍스트 스타일: 마진을 줄이고 색상을 뚜렷하게
             label_style = "<div style='font-size: 14px; font-weight: 800; padding-bottom: 8px; color: #1a1a1a;'>{}</div>"
             
             for p_var in st.session_state.passive_vars:
@@ -443,9 +470,6 @@ elif st.session_state.app_mode == "Dashboard":
             else:
                 st.warning("삭제할 데이터가 없습니다.")
 
-    # ----------------------------------------
-    # [Tab 2] 데이터베이스 관리 (에디터)
-    # ----------------------------------------
     with tab2:
         colored_header(label="전체 실험 데이터 아카이브", description="입력 이력을 한눈에 검토하고 이상치 데이터의 AI 반영 여부를 수정할 수 있습니다.", color_name="orange-70")
         st.session_state.df_data = st.data_editor(
@@ -455,15 +479,11 @@ elif st.session_state.app_mode == "Dashboard":
             column_config={"학습_적용": st.column_config.CheckboxColumn("학습 적용")}
         )
 
-    # ----------------------------------------
-    # [Tab 3] AI 최적화 대시보드
-    # ----------------------------------------
     with tab3:
         valid_df = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
         c1, c2 = st.columns([1.2, 1])
 
         with c1:
-            # 중복 텍스트 없는 깔끔한 제목
             colored_header(label=f"📈 최적화 경향 곡선", description=f"실험이 진행됨에 따라 타겟 지표({t_name})의 수렴 상태를 보여줍니다.", color_name="green-70")
             if len(valid_df) > 0:
                 chart_data = valid_df[t_name].expanding().max() if "Maximize" in t_dir else valid_df[t_name].expanding().min()
@@ -505,13 +525,14 @@ elif st.session_state.app_mode == "Dashboard":
                     st.session_state.prev_next_points = next_points
                         
                     for i, points in enumerate(next_points):
-                        with st.container():
-                            st.markdown(f"**실험 후보 {i+1}**")
+                        with st.container(border=True):
+                            st.markdown(f"<h5 style='margin:0; font-weight: 800; color: #ed542b;'>실험 후보 {i+1}</h5>", unsafe_allow_html=True)
+                            st.divider()
                             cols_rec = st.columns(len(f_names))
                             for idx, (var, val) in enumerate(zip(st.session_state.config_vars, points)):
                                 unit_str = f" {var['Unit']}" if var.get("Unit") else ""
                                 cols_rec[idx].metric(label=var["Name"], value=f"{round(val, 3)}{unit_str}")
-                            style_metric_cards(background_color="rgba(255,255,255,0.45)", border_left_color="#ed542b", border_color="rgba(255,255,255,0.7)", box_shadow=False)
+                            style_metric_cards(background_color="transparent", border_left_color="#ed542b", border_color="transparent", box_shadow=False)
                     
                     with st.expander("🔍 AI 연산 피팅 로그 데이터"):
                         debug_df = pd.DataFrame(X_train, columns=f_names)
