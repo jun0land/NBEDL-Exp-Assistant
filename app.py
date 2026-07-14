@@ -34,7 +34,7 @@ components.html(
 )
 
 # ==========================================
-# 2. 이미지 Base64 인코딩 & iOS Liquid Glass CSS (오류 완벽 수정)
+# 2. 이미지 Base64 인코딩 & iOS Liquid Glass CSS
 # ==========================================
 def get_base64_of_bin_file(bin_file):
     if os.path.exists(bin_file):
@@ -50,17 +50,10 @@ logo_html = f'<img src="data:image/png;base64,{logo_base64}" height="42" style="
 
 custom_css = f"""
 <style>
-/* ✅ 1. 폰트 충돌(꺽쇠 아이콘 깨짐) 완전 해결 */
+/* 전역 글꼴 Pretendard */
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
-
-/* 무식한 * 태그 대신, 텍스트가 들어가는 주요 태그에만 명시적 적용 */
-html, body, .stApp, p, span, h1, h2, h3, h4, h5, h6, label, input, button, select {{
-    font-family: 'Pretendard', sans-serif;
-}}
-/* 스트림릿 내부 아이콘은 원래 폰트를 유지하도록 절대 보호 */
-.material-icons, .material-symbols-rounded, [class^="stIcon"], span[class*="icon"], svg, path {{
-    font-family: 'Material Symbols Rounded', 'Material Icons', sans-serif !important;
-}}
+html, body, .stApp {{ font-family: 'Pretendard', sans-serif !important; }}
+.material-symbols-rounded, .material-icons, span[class*="material"] {{ font-family: 'Material Symbols Rounded', 'Material Icons' !important; }}
 
 .stApp {{
     background: linear-gradient(135deg, rgba(255,255,255,0.45), rgba(255,255,255,0.25)), url("data:image/png;base64,{bg_base64}");
@@ -72,30 +65,32 @@ html, body, .stApp, p, span, h1, h2, h3, h4, h5, h6, label, input, button, selec
 
 header[data-testid="stHeader"] {{ background: transparent !important; }}
 
+/* ✅ 1. 거슬리던 글씨 뒤 하얀색 네온(Shadow) 효과 완전 삭제 */
 h1, h2, h3, h4, h5, h6, label {{
-    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.9), 0 0 6px rgba(255, 255, 255, 0.6);
+    text-shadow: none !important;
 }}
 
-/* 메인 유리 블럭 컨테이너들 */
+/* ✅ 2. 블럭 배경: 더 강한 블러 처리(흐릿함) 및 테두리(Border) 완전 제거 */
 [data-testid="stForm"], 
 [data-testid="stExpander"], 
 [data-testid="stVerticalBlockBorderWrapper"], 
 .title-glass-container {{
-    background: rgba(255, 255, 255, 0.35) !important;
-    backdrop-filter: blur(24px) saturate(150%) !important;
-    -webkit-backdrop-filter: blur(24px) saturate(150%) !important;
-    border: 1px solid rgba(255, 255, 255, 0.6) !important;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08), inset 0 1px 2px rgba(255,255,255,0.8) !important;
+    background: rgba(255, 255, 255, 0.45) !important; /* 배경을 살짝 더 진하게 */
+    backdrop-filter: blur(36px) saturate(120%) !important; /* 투명함 대신 깊은 흐릿함 적용 */
+    -webkit-backdrop-filter: blur(36px) saturate(120%) !important;
+    border: none !important; /* 테두리 삭제 */
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.05) !important; /* 그림자만 은은하게 유지 */
     border-radius: 16px !important; 
     padding: 24px;
     margin-bottom: 16px;
 }}
 
-/* 사이드바 예외 처리 (블럭 중첩 오류 방지) */
+/* 사이드바 예외 처리 (사이드바 내부 컨테이너 디자인 깨짐 방지) */
 [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {{
-    background: transparent !important; border: none !important; box-shadow: none !important; padding: 0 !important;
+    background: transparent !important; backdrop-filter: none !important; box-shadow: none !important; padding: 0 !important;
 }}
 
+/* 타이틀 전용 패널 속성 재정의 (왼쪽 포인트 컬러 엣지는 유지) */
 .title-glass-container {{
     padding: 16px 24px;
     margin-bottom: 24px;
@@ -106,41 +101,49 @@ h1, h2, h3, h4, h5, h6, label {{
 }}
 .title-glass-container h2 {{ margin: 0; padding: 0; line-height: 1.1; display: flex; align-items: center; }}
 
-/* 탭(Tabs) 영역 */
+/* ✅ 3. 탭(Tabs) 디자인: 배경 곡률, 좌우 여백 및 테두리 제거 적용 */
 [data-testid="stTabs"] [data-baseweb="tab-list"] {{
     background: rgba(255, 255, 255, 0.35);
-    backdrop-filter: blur(16px);
-    padding: 4px;
-    border-radius: 12px;
-    gap: 4px;
-    border: 1px solid rgba(255,255,255,0.6);
+    backdrop-filter: blur(24px);
+    padding: 6px;
+    border-radius: 16px;
+    gap: 8px; /* 탭 사이 간격 증가 */
+    border: none !important; /* 테두리 삭제 */
 }}
 [data-testid="stTabs"] [data-baseweb="tab"] {{
     background: transparent !important;
     border: none !important;
-    border-radius: 8px !important;
+    border-radius: 12px !important; /* 곡률 적용 */
     color: #5e5652 !important;
-    padding: 10px 18px !important;
+    padding: 12px 24px !important; /* 좌우 여백 넉넉하게 확장 */
     font-weight: 800 !important;
     font-size: 1.05rem !important;
 }}
-
-/* ✅ 2. 활성화된 탭(Tabs) 투명 유리 질감으로 변경 */
 [data-testid="stTabs"] [aria-selected="true"] {{
-    /* 단색 배경 대신 투명도 높은 그라데이션 및 블러 적용 */
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.2)) !important; 
-    backdrop-filter: blur(16px) saturate(120%) !important;
-    -webkit-backdrop-filter: blur(16px) saturate(120%) !important;
+    background: rgba(255, 255, 255, 0.65) !important; 
+    backdrop-filter: blur(16px) !important;
     color: #ed542b !important;
-    border: 1px solid rgba(255, 255, 255, 0.6) !important;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.05), inset 0 1px 2px rgba(255,255,255,0.7) !important;
+    border: none !important; /* 선택된 탭도 테두리 삭제 */
+    box-shadow: 0 4px 12px rgba(0,0,0,0.06) !important;
 }}
 
+/* 폼 내부의 소그룹화 블럭도 흐릿함과 테두리 삭제 동일 적용 */
+[data-testid="stForm"] [data-testid="column"] {{
+    background: rgba(255, 255, 255, 0.4);
+    backdrop-filter: blur(24px) !important;
+    border: none !important;
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+    margin-bottom: 12px;
+}}
+
+/* 입력칸(Input) 캡슐 (여기는 사용성 구분을 위해 테두리 미세하게 유지) */
 div[data-baseweb="input"], div[data-baseweb="select"] > div {{
     background: rgba(255, 255, 255, 0.75) !important; 
     border-radius: 8px !important; 
-    border: 1px solid rgba(255, 255, 255, 1.0) !important;
-    box-shadow: inset 0 2px 4px rgba(0,0,0,0.02), 0 2px 6px rgba(0,0,0,0.03) !important;
+    border: 1px solid rgba(255, 255, 255, 0.8) !important;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.02) !important;
     transition: all 0.2s ease !important;
     overflow: hidden !important; 
 }}
@@ -151,65 +154,44 @@ div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-w
 }}
 div[data-baseweb="input"] > div {{ background: transparent !important; border: none !important; }}
 
-[data-testid="stForm"] [data-testid="column"] {{
-    background: rgba(255, 255, 255, 0.4);
-    border: 1px solid rgba(255, 255, 255, 0.8);
-    border-radius: 12px;
-    padding: 16px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03), inset 0 1px 2px rgba(255, 255, 255, 0.6);
-    margin-bottom: 12px;
-}}
-
-/* ✅ 3. Upload 버튼 글씨 겹침 해결: 업로더 영역 CSS 완전 초기화 */
+/* 파일 업로더 오류 방어 */
 [data-testid="stFileUploader"] {{
     background: rgba(255, 255, 255, 0.35);
-    backdrop-filter: blur(12px);
-    border: 1px dashed rgba(237, 84, 43, 0.5);
-    border-radius: 12px;
+    backdrop-filter: blur(24px);
+    border: 2px dashed rgba(237, 84, 43, 0.4); /* 업로더 구분을 위해 점선 유지 */
+    border-radius: 16px;
     padding: 16px;
 }}
 [data-testid="stFileUploader"] section {{ background: transparent !important; }}
 
-/* 업로더 내부 버튼은 투명하고 단순하게 리셋하여 이중 렌더링 겹침 방지 */
-[data-testid="stFileUploader"] button {{
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-}}
-
-/* 메인 버튼 스타일을 stFileUploader 밖으로 격리 (div.stButton 로 명확히 타겟팅) */
-div.stButton > button {{
+/* 버튼 스타일 */
+.stButton > button {{
     border-radius: 8px !important; 
-    border: 1px solid rgba(255,255,255,0.8) !important;
-    background: rgba(255,255,255,0.6) !important;
+    border: none !important; /* 버튼 테두리도 삭제 */
+    background: rgba(255,255,255,0.8) !important;
     font-weight: 700 !important;
     color: #1a1a1a !important;
     box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important;
     transition: all 0.2s ease !important;
 }}
-div.stButton > button[kind="primary"] {{
+.stButton > button[kind="primary"] {{
     background: linear-gradient(135deg, #ed542b, #f68b21) !important;
-    border: none !important;
     color: white !important;
     box-shadow: 0 6px 16px rgba(237,84,43,0.3) !important;
 }}
-div.stButton > button:hover {{
+.stButton > button:hover {{
     transform: translateY(-2px);
     box-shadow: 0 8px 20px rgba(17,24,39,0.1) !important;
 }}
 
-/* ✅ 4. 차트 배경 문제 해결: 배경 완전히 날리고 캔버스에만 곡률 부여 */
+/* 차트 짤림 방지 */
 [data-testid="stVegaLiteChart"] {{
     background: transparent !important; 
+    border-radius: 12px !important;
     border: none !important;
     padding: 0 !important; 
     box-shadow: none !important;
     overflow: visible !important;
-}}
-/* 차트 내부 캔버스 테두리만 둥글게 */
-[data-testid="stVegaLiteChart"] canvas {{
-    border-radius: 12px !important;
-    overflow: hidden !important;
 }}
 </style>
 """
@@ -485,11 +467,12 @@ elif st.session_state.app_mode == "Dashboard":
 
         with c1:
             colored_header(label=f"📈 최적화 경향 곡선", description=f"실험이 진행됨에 따라 타겟 지표({t_name})의 수렴 상태를 보여줍니다.", color_name="green-70")
-            if len(valid_df) > 0:
-                chart_data = valid_df[t_name].expanding().max() if "Maximize" in t_dir else valid_df[t_name].expanding().min()
-                st.line_chart(chart_data, height=350)
-            else:
-                st.info("분석용 데이터가 입력되지 않았습니다.")
+            with st.container(border=True):
+                if len(valid_df) > 0:
+                    chart_data = valid_df[t_name].expanding().max() if "Maximize" in t_dir else valid_df[t_name].expanding().min()
+                    st.line_chart(chart_data, height=350)
+                else:
+                    st.info("분석용 데이터가 입력되지 않았습니다.")
 
         with c2:
             colored_header(label="🤖 베이지안 추천 차기 조건", description="가우시안 프로세스 알고리즘에 기반하여 제안된 3가지 최적 조건 셋입니다.", color_name="orange-70")
