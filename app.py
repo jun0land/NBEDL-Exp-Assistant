@@ -50,45 +50,52 @@ logo_html = f'<img src="data:image/png;base64,{logo_base64}" height="42" style="
 
 custom_css = f"""
 <style>
+/* 전역 글꼴 Pretendard (아이콘 폰트 보호) */
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
 html, body, .stApp {{ font-family: 'Pretendard', sans-serif !important; }}
 .material-symbols-rounded, .material-icons, span[class*="material"] {{ font-family: 'Material Symbols Rounded', 'Material Icons' !important; }}
 
-/* 최상위 배경 이미지 지정 */
 .stApp {{
-    background: linear-gradient(135deg, rgba(255,255,255,0.2), rgba(255,255,255,0.05)), url("data:image/png;base64,{bg_base64}");
+    background: linear-gradient(135deg, rgba(255,255,255,0.45), rgba(255,255,255,0.25)), url("data:image/png;base64,{bg_base64}");
     background-size: cover;
     background-position: center;
     background-attachment: fixed;
     color: #1a1a1a;
 }}
 
-/* 불투명 방해막 모조리 투명하게 제거 */
-[data-testid="stAppViewContainer"],
-[data-testid="stMain"],
-[data-testid="stHeader"],
-.main {{
-    background: transparent !important;
-}}
+header[data-testid="stHeader"] {{ background: transparent !important; }}
 
-/* 네온(Shadow) 효과 완전 삭제 */
+/* 글씨 뒤 네온(Shadow) 효과 완전 삭제 */
 h1, h2, h3, h4, h5, h6, label {{ text-shadow: none !important; }}
 
 /* ========================================================================= */
-/* 진정한 Liquid Glass 블럭 (테두리 없음, 투명도 증가, 강력한 블러) */
+/* ✅ 1. 메인 유리 블럭 (Setup 탭의 큰 그룹, 폼, 익스팬더 전체) */
 /* ========================================================================= */
 [data-testid="stForm"], 
 [data-testid="stExpander"], 
 [data-testid="stVerticalBlockBorderWrapper"], 
 .title-glass-container {{
-    background: rgba(255, 255, 255, 0.15) !important; 
-    backdrop-filter: blur(48px) saturate(180%) !important; 
-    -webkit-backdrop-filter: blur(48px) saturate(180%) !important;
+    background: rgba(255, 255, 255, 0.45) !important; 
+    backdrop-filter: blur(36px) saturate(120%) !important; 
+    -webkit-backdrop-filter: blur(36px) saturate(120%) !important;
     border: none !important; 
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05) !important; 
-    border-radius: 24px !important; 
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.05) !important; 
+    border-radius: 20px !important; 
     padding: 24px;
     margin-bottom: 16px;
+}}
+
+/* ========================================================================= */
+/* ✅ 2. 중첩된 내부 유리 블럭 (변수 1, 변수 2 등 개별 입력칸 묶음) */
+/* ========================================================================= */
+[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stVerticalBlockBorderWrapper"] {{
+    background: rgba(255, 255, 255, 0.25) !important;
+    backdrop-filter: blur(16px) saturate(120%) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(120%) !important;
+    border-radius: 12px !important;
+    padding: 16px !important;
+    box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.6), 0 2px 8px rgba(0,0,0,0.03) !important;
+    margin-bottom: 12px !important;
 }}
 
 /* 사이드바 예외 처리 */
@@ -107,15 +114,13 @@ h1, h2, h3, h4, h5, h6, label {{ text-shadow: none !important; }}
 }}
 .title-glass-container h2 {{ margin: 0; padding: 0; line-height: 1.1; display: flex; align-items: center; }}
 
-/* --------------------------------------------------- */
-/* ✅ 탭(Tabs) 컨트롤: 하얀 배경 없애고 텍스트+밑줄만 깔끔하게 남기기 */
-/* --------------------------------------------------- */
+/* 탭(Tabs) 컨트롤 */
 [data-testid="stTabs"] [data-baseweb="tab-list"] {{
     background: transparent !important;
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
     padding: 0 12px !important;
-    gap: 20px; /* 탭 사이 여백 넉넉하게 */
+    gap: 20px; 
     border: none !important;
     box-shadow: none !important;
     margin-bottom: 16px;
@@ -137,43 +142,38 @@ h1, h2, h3, h4, h5, h6, label {{ text-shadow: none !important; }}
     -webkit-backdrop-filter: none !important;
     color: #ed542b !important;
     box-shadow: none !important;
-    border-bottom: 3px solid #ed542b !important; /* 선택됨을 나타내는 깔끔한 하단 라인 */
+    border-bottom: 3px solid #ed542b !important; 
 }}
 
-/* --------------------------------------------------- */
-/* 폼 내부에 변수별로 묶인 소그룹(Column) 투명 블럭화 */
-/* --------------------------------------------------- */
+/* 폼 내부에 변수별로 묶인 소그룹 (Tab 1 신규 입력용) */
 [data-testid="stForm"] [data-testid="column"] {{
-    background: rgba(255, 255, 255, 0.2);
-    backdrop-filter: blur(30px) saturate(150%) !important;
-    -webkit-backdrop-filter: blur(30px) saturate(150%) !important;
+    background: rgba(255, 255, 255, 0.4);
+    backdrop-filter: blur(24px) !important;
     border: none !important;
-    border-radius: 16px;
-    padding: 18px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
     margin-bottom: 12px;
 }}
 
-/* --------------------------------------------------- */
 /* 입력칸(Input): 푹 파인 투명 캡슐 */
-/* --------------------------------------------------- */
 div[data-baseweb="input"], div[data-baseweb="select"] > div {{
-    background: rgba(255, 255, 255, 0.35) !important; 
+    background: rgba(255, 255, 255, 0.65) !important; 
     backdrop-filter: blur(16px) !important;
     -webkit-backdrop-filter: blur(16px) !important;
-    border-radius: 12px !important; 
-    border: none !important; 
-    box-shadow: inset 0 2px 6px rgba(0,0,0,0.06) !important; 
+    border-radius: 8px !important; 
+    border: 1px solid rgba(255, 255, 255, 0.9) !important; 
+    box-shadow: inset 0 2px 6px rgba(0,0,0,0.04) !important; 
     transition: all 0.2s ease !important;
     overflow: hidden !important; 
 }}
 div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-within {{
-    background: rgba(255,255,255,0.6) !important;
+    background: rgba(255,255,255,0.9) !important;
     box-shadow: inset 0 1px 3px rgba(237,84,43,0.1), 0 0 0 2px rgba(237,84,43,0.3) !important;
 }}
 div[data-baseweb="input"] > div {{ background: transparent !important; border: none !important; }}
 
-/* 파일 업로더 */
+/* 파일 업로더 오류 방어 */
 [data-testid="stFileUploader"] {{
     background: rgba(255, 255, 255, 0.15);
     backdrop-filter: blur(30px);
@@ -187,7 +187,7 @@ div[data-baseweb="input"] > div {{ background: transparent !important; border: n
 .stButton > button {{
     border-radius: 12px !important; 
     border: none !important;
-    background: rgba(255,255,255,0.4) !important;
+    background: rgba(255,255,255,0.6) !important;
     backdrop-filter: blur(20px) !important;
     -webkit-backdrop-filter: blur(20px) !important;
     font-weight: 700 !important;
@@ -297,8 +297,9 @@ if st.session_state.app_mode == "Setup":
             load_excel_data(uploaded_file)
             st.rerun()
     
-    colored_header(label="기본 프로젝트 설정", description="실험 이름과 최적화 목표 지표를 설정하세요.", color_name="orange-70")
+    # ✅ 헤더와 입력칸을 완전히 하나의 거대한 유리 블럭으로 묶음
     with st.container(border=True):
+        colored_header(label="기본 프로젝트 설정", description="실험 이름과 최적화 목표 지표를 설정하세요.", color_name="orange-70")
         st.session_state.exp_name = st.text_input("📝 실험 프로젝트 이름", value=st.session_state.exp_name, placeholder="예: NBEDL_Experiment_01")
         
         col_t1, col_t2, col_t3 = st.columns(3)
@@ -308,38 +309,40 @@ if st.session_state.app_mode == "Setup":
         passive_val = ",".join(st.session_state.passive_vars) if st.session_state.passive_vars else ""
         passive_input = col_t3.text_input("환경 변수 (쉼표 구분)", value=passive_val, placeholder="예: 온도 (°C), 습도 (%)")
     
-    colored_header(label="🔬 최적화 대상 공정 변수 입력", description="AI가 탐색할 공정 조건의 이름과 변수 범위를 지정하세요.", color_name="orange-70")
-    
-    for i, var in enumerate(st.session_state.config_vars):
-        with st.container(border=True): 
-            c1, c_u, c2, c3, c4 = st.columns([2, 1, 2, 2, 2])
-            var["Name"] = c1.text_input(f"변수 {i+1} 이름", value=var.get("Name", ""), key=f"name_{i}", placeholder="예: 스핀코팅 속도1")
-            var["Unit"] = c_u.text_input("단위", value=var.get("Unit", ""), key=f"unit_{i}", placeholder="예: rpm")
-            
-            type_options = ["Real (실수)", "Integer (정수)", "Categorical (범주)"]
-            safe_type = var.get("Type", "Real (실수)")
-            if safe_type not in type_options: safe_type = "Real (실수)"
+    # ✅ 최적화 대상도 헤더부터 전체를 하나의 거대 유리 블럭으로 묶음
+    with st.container(border=True):
+        colored_header(label="🔬 최적화 대상 공정 변수 입력", description="AI가 탐색할 공정 조건의 이름과 변수 범위를 지정하세요.", color_name="orange-70")
+        
+        for i, var in enumerate(st.session_state.config_vars):
+            with st.container(border=True): # 내부의 작은 유리 블럭
+                c1, c_u, c2, c3, c4 = st.columns([2, 1, 2, 2, 2])
+                var["Name"] = c1.text_input(f"변수 {i+1} 이름", value=var.get("Name", ""), key=f"name_{i}", placeholder="예: 스핀코팅 속도1")
+                var["Unit"] = c_u.text_input("단위", value=var.get("Unit", ""), key=f"unit_{i}", placeholder="예: rpm")
                 
-            var["Type"] = c2.selectbox("타입", type_options, key=f"type_{i}", index=type_options.index(safe_type))
-            
-            if "Real" in var["Type"]:
-                var["Min"] = c3.number_input("최소값", value=float(var.get("Min", 0.0)), key=f"rmin_{i}")
-                var["Max"] = c4.number_input("최대값", value=float(var.get("Max", 10.0)), key=f"rmax_{i}")
-                var["Options"] = ""
-            elif "Integer" in var["Type"]:
-                var["Min"] = c3.number_input("최소값", value=int(var.get("Min", 0)), step=1, key=f"imin_{i}")
-                var["Max"] = c4.number_input("최대값", value=int(var.get("Max", 100)), step=1, key=f"imax_{i}")
-                var["Options"] = ""
-            elif "Categorical" in var["Type"]:
-                var["Min"], var["Max"] = 0, 0
-                var["Options"] = c3.text_input("옵션 (쉼표 구분)", value=var.get("Options", ""), key=f"cat_{i}", placeholder="예: CB, Toluene")
-    
-    if st.button("➕ 공정 변수 블럭 추가", use_container_width=True):
-        st.session_state.config_vars.append({
-            "Old_Name": "", "Name": "", "Unit": "", "Type": "Real (실수)", 
-            "Min": 0.0, "Max": 10.0, "Options": ""
-        })
-        st.rerun()
+                type_options = ["Real (실수)", "Integer (정수)", "Categorical (범주)"]
+                safe_type = var.get("Type", "Real (실수)")
+                if safe_type not in type_options: safe_type = "Real (실수)"
+                    
+                var["Type"] = c2.selectbox("타입", type_options, key=f"type_{i}", index=type_options.index(safe_type))
+                
+                if "Real" in var["Type"]:
+                    var["Min"] = c3.number_input("최소값", value=float(var.get("Min", 0.0)), key=f"rmin_{i}")
+                    var["Max"] = c4.number_input("최대값", value=float(var.get("Max", 10.0)), key=f"rmax_{i}")
+                    var["Options"] = ""
+                elif "Integer" in var["Type"]:
+                    var["Min"] = c3.number_input("최소값", value=int(var.get("Min", 0)), step=1, key=f"imin_{i}")
+                    var["Max"] = c4.number_input("최대값", value=int(var.get("Max", 100)), step=1, key=f"imax_{i}")
+                    var["Options"] = ""
+                elif "Categorical" in var["Type"]:
+                    var["Min"], var["Max"] = 0, 0
+                    var["Options"] = c3.text_input("옵션 (쉼표 구분)", value=var.get("Options", ""), key=f"cat_{i}", placeholder="예: CB, Toluene")
+        
+        if st.button("➕ 공정 변수 블럭 추가", use_container_width=True):
+            st.session_state.config_vars.append({
+                "Old_Name": "", "Name": "", "Unit": "", "Type": "Real (실수)", 
+                "Min": 0.0, "Max": 10.0, "Options": ""
+            })
+            st.rerun()
 
     st.write("")
     if st.button("🚀 실험 시작 및 대시보드 생성", type="primary", use_container_width=True):
@@ -422,8 +425,8 @@ elif st.session_state.app_mode == "Dashboard":
     tab1, tab2, tab3 = st.tabs(["📝 신규 실험 입력", "🗂️ 데이터베이스 관리", "🤖 AI 최적화 대시보드"])
 
     with tab1:
+        # 이 탭은 st.form 이 자체가 거대한 유리 블럭 역할을 합니다.
         colored_header(label="새로운 스플릿 실험 결과 입력", description="값을 모두 적은 후 하단 '데이터 추가' 버튼을 클릭하세요.", color_name="orange-70")
-        
         with st.form("input_form", clear_on_submit=True):
             cols = st.columns(len(st.session_state.passive_vars) + len(st.session_state.config_vars) + 1)
             new_row = {"학습_적용": True}
@@ -471,21 +474,24 @@ elif st.session_state.app_mode == "Dashboard":
                 st.warning("삭제할 데이터가 없습니다.")
 
     with tab2:
-        colored_header(label="전체 실험 데이터 아카이브", description="입력 이력을 한눈에 검토하고 이상치 데이터의 AI 반영 여부를 수정할 수 있습니다.", color_name="orange-70")
-        st.session_state.df_data = st.data_editor(
-            st.session_state.df_data, 
-            use_container_width=True, 
-            hide_index=True, 
-            column_config={"학습_적용": st.column_config.CheckboxColumn("학습 적용")}
-        )
+        # ✅ 데이터베이스 관리 화면도 거대한 유리 블럭으로 감싸기
+        with st.container(border=True):
+            colored_header(label="전체 실험 데이터 아카이브", description="입력 이력을 한눈에 검토하고 이상치 데이터의 AI 반영 여부를 수정할 수 있습니다.", color_name="orange-70")
+            st.session_state.df_data = st.data_editor(
+                st.session_state.df_data, 
+                use_container_width=True, 
+                hide_index=True, 
+                column_config={"학습_적용": st.column_config.CheckboxColumn("학습 적용")}
+            )
 
     with tab3:
         valid_df = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
         c1, c2 = st.columns([1.2, 1])
 
         with c1:
-            colored_header(label=f"📈 최적화 경향 곡선", description=f"실험이 진행됨에 따라 타겟 지표({t_name})의 수렴 상태를 보여줍니다.", color_name="green-70")
+            # ✅ 차트 화면 거대 유리 블럭
             with st.container(border=True):
+                colored_header(label=f"📈 최적화 경향 곡선", description=f"실험이 진행됨에 따라 타겟 지표({t_name})의 수렴 상태를 보여줍니다.", color_name="green-70")
                 if len(valid_df) > 0:
                     chart_data = valid_df[t_name].expanding().max() if "Maximize" in t_dir else valid_df[t_name].expanding().min()
                     st.line_chart(chart_data, height=350)
@@ -493,49 +499,51 @@ elif st.session_state.app_mode == "Dashboard":
                     st.info("분석용 데이터가 입력되지 않았습니다.")
 
         with c2:
-            colored_header(label="🤖 베이지안 추천 차기 조건", description="가우시안 프로세스 알고리즘에 기반하여 제안된 3가지 최적 조건 셋입니다.", color_name="orange-70")
-            if st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
-                if len(valid_df) < 2:
-                    st.warning("정밀 분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
-                else:
-                    with st.spinner("알고리즘 연산 중..."):
-                        X_train, y_train = process_robust_data(valid_df, f_names, t_name)
-                        ai_spaces = []
-                        for var in st.session_state.config_vars:
-                            if "Real" in var["Type"]: ai_spaces.append(Real(var["Min"], var["Max"], name=var["Name"]))
-                            elif "Integer" in var["Type"]: ai_spaces.append(Integer(var["Min"], var["Max"], name=var["Name"]))
-                            elif "Categorical" in var["Type"]: ai_spaces.append(Categorical([o.strip() for o in var["Options"].split(",")], name=var["Name"]))
-                        
-                        y_train_fit = [-val for val in y_train] if "Maximize" in t_dir else y_train
+            # ✅ AI 추천 화면 거대 유리 블럭
+            with st.container(border=True):
+                colored_header(label="🤖 베이지안 추천 차기 조건", description="가우시안 프로세스 알고리즘에 기반하여 제안된 3가지 최적 조건 셋입니다.", color_name="orange-70")
+                if st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
+                    if len(valid_df) < 2:
+                        st.warning("정밀 분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
+                    else:
+                        with st.spinner("알고리즘 연산 중..."):
+                            X_train, y_train = process_robust_data(valid_df, f_names, t_name)
+                            ai_spaces = []
+                            for var in st.session_state.config_vars:
+                                if "Real" in var["Type"]: ai_spaces.append(Real(var["Min"], var["Max"], name=var["Name"]))
+                                elif "Integer" in var["Type"]: ai_spaces.append(Integer(var["Min"], var["Max"], name=var["Name"]))
+                                elif "Categorical" in var["Type"]: ai_spaces.append(Categorical([o.strip() for o in var["Options"].split(",")], name=var["Name"]))
                             
-                        opt = Optimizer(dimensions=ai_spaces, base_estimator="GP", acq_func="EI", random_state=None)
+                            y_train_fit = [-val for val in y_train] if "Maximize" in t_dir else y_train
+                                
+                            opt = Optimizer(dimensions=ai_spaces, base_estimator="GP", acq_func="EI", random_state=None)
+                            
+                            X_train_safe = []
+                            y_train_fit_safe = []
+                            for i, point in enumerate(X_train):
+                                if all(ai_spaces[j].low <= val <= ai_spaces[j].high for j, val in enumerate(point)):
+                                    X_train_safe.append(point)
+                                    y_train_fit_safe.append(y_train_fit[i])
+                            
+                            opt.tell(X_train_safe, y_train_fit_safe)
+                            next_points = opt.ask(n_points=3)
                         
-                        X_train_safe = []
-                        y_train_fit_safe = []
-                        for i, point in enumerate(X_train):
-                            if all(ai_spaces[j].low <= val <= ai_spaces[j].high for j, val in enumerate(point)):
-                                X_train_safe.append(point)
-                                y_train_fit_safe.append(y_train_fit[i])
+                        if "prev_next_points" in st.session_state and st.session_state.prev_next_points == next_points:
+                            st.info("💡 **AI 수렴 상태 판단:** 현재 입력된 데이터 풀 안에서 해당 지점이 가장 최적의 공정 조건 범위로 강력하게 매핑되었습니다.")
                         
-                        opt.tell(X_train_safe, y_train_fit_safe)
-                        next_points = opt.ask(n_points=3)
-                    
-                    if "prev_next_points" in st.session_state and st.session_state.prev_next_points == next_points:
-                        st.info("💡 **AI 수렴 상태 판단:** 현재 입력된 데이터 풀 안에서 해당 지점이 가장 최적의 공정 조건 범위로 강력하게 매핑되었습니다.")
-                    
-                    st.session_state.prev_next_points = next_points
+                        st.session_state.prev_next_points = next_points
+                            
+                        for i, points in enumerate(next_points):
+                            with st.container(border=True): # 내부의 작은 유리 블럭
+                                st.markdown(f"<h5 style='margin:0; font-weight: 800; color: #ed542b;'>실험 후보 {i+1}</h5>", unsafe_allow_html=True)
+                                st.divider()
+                                cols_rec = st.columns(len(f_names))
+                                for idx, (var, val) in enumerate(zip(st.session_state.config_vars, points)):
+                                    unit_str = f" {var['Unit']}" if var.get("Unit") else ""
+                                    cols_rec[idx].metric(label=var["Name"], value=f"{round(val, 3)}{unit_str}")
+                                style_metric_cards(background_color="transparent", border_left_color="#ed542b", border_color="transparent", box_shadow=False)
                         
-                    for i, points in enumerate(next_points):
-                        with st.container(border=True):
-                            st.markdown(f"<h5 style='margin:0; font-weight: 800; color: #ed542b;'>실험 후보 {i+1}</h5>", unsafe_allow_html=True)
-                            st.divider()
-                            cols_rec = st.columns(len(f_names))
-                            for idx, (var, val) in enumerate(zip(st.session_state.config_vars, points)):
-                                unit_str = f" {var['Unit']}" if var.get("Unit") else ""
-                                cols_rec[idx].metric(label=var["Name"], value=f"{round(val, 3)}{unit_str}")
-                            style_metric_cards(background_color="transparent", border_left_color="#ed542b", border_color="transparent", box_shadow=False)
-                    
-                    with st.expander("🔍 AI 연산 피팅 로그 데이터"):
-                        debug_df = pd.DataFrame(X_train, columns=f_names)
-                        debug_df[t_name] = y_train
-                        st.dataframe(debug_df, use_container_width=True)
+                        with st.expander("🔍 AI 연산 피팅 로그 데이터"):
+                            debug_df = pd.DataFrame(X_train, columns=f_names)
+                            debug_df[t_name] = y_train
+                            st.dataframe(debug_df, use_container_width=True)
