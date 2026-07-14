@@ -50,47 +50,52 @@ logo_html = f'<img src="data:image/png;base64,{logo_base64}" height="42" style="
 
 custom_css = f"""
 <style>
-/* 전역 글꼴 Pretendard */
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
 html, body, .stApp {{ font-family: 'Pretendard', sans-serif !important; }}
 .material-symbols-rounded, .material-icons, span[class*="material"] {{ font-family: 'Material Symbols Rounded', 'Material Icons' !important; }}
 
+/* 최상위 배경 이미지 지정 */
 .stApp {{
-    background: linear-gradient(135deg, rgba(255,255,255,0.45), rgba(255,255,255,0.25)), url("data:image/png;base64,{bg_base64}");
+    background: linear-gradient(135deg, rgba(255,255,255,0.2), rgba(255,255,255,0.05)), url("data:image/png;base64,{bg_base64}");
     background-size: cover;
     background-position: center;
     background-attachment: fixed;
     color: #1a1a1a;
 }}
 
-header[data-testid="stHeader"] {{ background: transparent !important; }}
-
-/* ✅ 1. 거슬리던 글씨 뒤 하얀색 네온(Shadow) 효과 완전 삭제 */
-h1, h2, h3, h4, h5, h6, label {{
-    text-shadow: none !important;
+/* 불투명 방해막 모조리 투명하게 제거 */
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+[data-testid="stHeader"],
+.main {{
+    background: transparent !important;
 }}
 
-/* ✅ 2. 블럭 배경: 더 강한 블러 처리(흐릿함) 및 테두리(Border) 완전 제거 */
+/* 네온(Shadow) 효과 완전 삭제 */
+h1, h2, h3, h4, h5, h6, label {{ text-shadow: none !important; }}
+
+/* ========================================================================= */
+/* 진정한 Liquid Glass 블럭 (테두리 없음, 투명도 증가, 강력한 블러) */
+/* ========================================================================= */
 [data-testid="stForm"], 
 [data-testid="stExpander"], 
 [data-testid="stVerticalBlockBorderWrapper"], 
 .title-glass-container {{
-    background: rgba(255, 255, 255, 0.45) !important; /* 배경을 살짝 더 진하게 */
-    backdrop-filter: blur(36px) saturate(120%) !important; /* 투명함 대신 깊은 흐릿함 적용 */
-    -webkit-backdrop-filter: blur(36px) saturate(120%) !important;
-    border: none !important; /* 테두리 삭제 */
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.05) !important; /* 그림자만 은은하게 유지 */
-    border-radius: 16px !important; 
+    background: rgba(255, 255, 255, 0.15) !important; 
+    backdrop-filter: blur(48px) saturate(180%) !important; 
+    -webkit-backdrop-filter: blur(48px) saturate(180%) !important;
+    border: none !important; 
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05) !important; 
+    border-radius: 24px !important; 
     padding: 24px;
     margin-bottom: 16px;
 }}
 
-/* 사이드바 예외 처리 (사이드바 내부 컨테이너 디자인 깨짐 방지) */
+/* 사이드바 예외 처리 */
 [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {{
     background: transparent !important; backdrop-filter: none !important; box-shadow: none !important; padding: 0 !important;
 }}
 
-/* 타이틀 전용 패널 속성 재정의 (왼쪽 포인트 컬러 엣지는 유지) */
 .title-glass-container {{
     padding: 16px 24px;
     margin-bottom: 24px;
@@ -98,77 +103,93 @@ h1, h2, h3, h4, h5, h6, label {{
     display: flex;
     align-items: center;
     border-left: 6px solid #ed542b !important; 
+    border-radius: 20px !important;
 }}
 .title-glass-container h2 {{ margin: 0; padding: 0; line-height: 1.1; display: flex; align-items: center; }}
 
-/* ✅ 3. 탭(Tabs) 디자인: 배경 곡률, 좌우 여백 및 테두리 제거 적용 */
+/* --------------------------------------------------- */
+/* ✅ 탭(Tabs) 컨트롤: 하얀 배경 없애고 텍스트+밑줄만 깔끔하게 남기기 */
+/* --------------------------------------------------- */
 [data-testid="stTabs"] [data-baseweb="tab-list"] {{
-    background: rgba(255, 255, 255, 0.35);
-    backdrop-filter: blur(24px);
-    padding: 6px;
-    border-radius: 16px;
-    gap: 8px; /* 탭 사이 간격 증가 */
-    border: none !important; /* 테두리 삭제 */
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    padding: 0 12px !important;
+    gap: 20px; /* 탭 사이 여백 넉넉하게 */
+    border: none !important;
+    box-shadow: none !important;
+    margin-bottom: 16px;
 }}
 [data-testid="stTabs"] [data-baseweb="tab"] {{
     background: transparent !important;
     border: none !important;
-    border-radius: 12px !important; /* 곡률 적용 */
-    color: #5e5652 !important;
-    padding: 12px 24px !important; /* 좌우 여백 넉넉하게 확장 */
+    border-radius: 0 !important;
+    color: #7a716c !important;
+    padding: 10px 4px !important; 
     font-weight: 800 !important;
-    font-size: 1.05rem !important;
+    font-size: 1.1rem !important;
+    box-shadow: none !important;
+    transition: all 0.2s ease;
 }}
 [data-testid="stTabs"] [aria-selected="true"] {{
-    background: rgba(255, 255, 255, 0.65) !important; 
-    backdrop-filter: blur(16px) !important;
+    background: transparent !important; 
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     color: #ed542b !important;
-    border: none !important; /* 선택된 탭도 테두리 삭제 */
-    box-shadow: 0 4px 12px rgba(0,0,0,0.06) !important;
+    box-shadow: none !important;
+    border-bottom: 3px solid #ed542b !important; /* 선택됨을 나타내는 깔끔한 하단 라인 */
 }}
 
-/* 폼 내부의 소그룹화 블럭도 흐릿함과 테두리 삭제 동일 적용 */
+/* --------------------------------------------------- */
+/* 폼 내부에 변수별로 묶인 소그룹(Column) 투명 블럭화 */
+/* --------------------------------------------------- */
 [data-testid="stForm"] [data-testid="column"] {{
-    background: rgba(255, 255, 255, 0.4);
-    backdrop-filter: blur(24px) !important;
+    background: rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(30px) saturate(150%) !important;
+    -webkit-backdrop-filter: blur(30px) saturate(150%) !important;
     border: none !important;
-    border-radius: 12px;
-    padding: 16px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+    border-radius: 16px;
+    padding: 18px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
     margin-bottom: 12px;
 }}
 
-/* 입력칸(Input) 캡슐 (여기는 사용성 구분을 위해 테두리 미세하게 유지) */
+/* --------------------------------------------------- */
+/* 입력칸(Input): 푹 파인 투명 캡슐 */
+/* --------------------------------------------------- */
 div[data-baseweb="input"], div[data-baseweb="select"] > div {{
-    background: rgba(255, 255, 255, 0.75) !important; 
-    border-radius: 8px !important; 
-    border: 1px solid rgba(255, 255, 255, 0.8) !important;
-    box-shadow: inset 0 2px 4px rgba(0,0,0,0.02) !important;
+    background: rgba(255, 255, 255, 0.35) !important; 
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
+    border-radius: 12px !important; 
+    border: none !important; 
+    box-shadow: inset 0 2px 6px rgba(0,0,0,0.06) !important; 
     transition: all 0.2s ease !important;
     overflow: hidden !important; 
 }}
 div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-within {{
-    border-color: #ed542b !important;
-    background: rgba(255,255,255,0.95) !important;
-    box-shadow: inset 0 1px 3px rgba(237,84,43,0.1), 0 0 0 2px rgba(237,84,43,0.15) !important;
+    background: rgba(255,255,255,0.6) !important;
+    box-shadow: inset 0 1px 3px rgba(237,84,43,0.1), 0 0 0 2px rgba(237,84,43,0.3) !important;
 }}
 div[data-baseweb="input"] > div {{ background: transparent !important; border: none !important; }}
 
-/* 파일 업로더 오류 방어 */
+/* 파일 업로더 */
 [data-testid="stFileUploader"] {{
-    background: rgba(255, 255, 255, 0.35);
-    backdrop-filter: blur(24px);
-    border: 2px dashed rgba(237, 84, 43, 0.4); /* 업로더 구분을 위해 점선 유지 */
+    background: rgba(255, 255, 255, 0.15);
+    backdrop-filter: blur(30px);
+    border: 2px dashed rgba(237, 84, 43, 0.4);
     border-radius: 16px;
     padding: 16px;
 }}
 [data-testid="stFileUploader"] section {{ background: transparent !important; }}
 
-/* 버튼 스타일 */
+/* 버튼 투명 글래스화 */
 .stButton > button {{
-    border-radius: 8px !important; 
-    border: none !important; /* 버튼 테두리도 삭제 */
-    background: rgba(255,255,255,0.8) !important;
+    border-radius: 12px !important; 
+    border: none !important;
+    background: rgba(255,255,255,0.4) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
     font-weight: 700 !important;
     color: #1a1a1a !important;
     box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important;
@@ -179,15 +200,12 @@ div[data-baseweb="input"] > div {{ background: transparent !important; border: n
     color: white !important;
     box-shadow: 0 6px 16px rgba(237,84,43,0.3) !important;
 }}
-.stButton > button:hover {{
-    transform: translateY(-2px);
-    box-shadow: 0 8px 20px rgba(17,24,39,0.1) !important;
-}}
+.stButton > button:hover {{ transform: translateY(-2px); box-shadow: 0 8px 20px rgba(17,24,39,0.1) !important; }}
 
-/* 차트 짤림 방지 */
+/* 차트 배경 투명화 */
 [data-testid="stVegaLiteChart"] {{
     background: transparent !important; 
-    border-radius: 12px !important;
+    border-radius: 16px !important;
     border: none !important;
     padding: 0 !important; 
     box-shadow: none !important;
