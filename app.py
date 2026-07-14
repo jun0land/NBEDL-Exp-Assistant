@@ -34,7 +34,7 @@ components.html(
 )
 
 # ==========================================
-# 2. 이미지 Base64 인코딩 & iOS Liquid Glass CSS
+# 2. 이미지 Base64 인코딩 & 버그 프리 Liquid Glass CSS
 # ==========================================
 def get_base64_of_bin_file(bin_file):
     if os.path.exists(bin_file):
@@ -50,11 +50,19 @@ logo_html = f'<img src="data:image/png;base64,{logo_base64}" height="42" style="
 
 custom_css = f"""
 <style>
-/* 전역 글꼴 Pretendard (아이콘 폰트 보호) */
+/* ✅ 1. 폰트 강제 주입으로 인한 꺽쇠/Upload 아이콘 깨짐 완벽 해결 */
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
-html, body, .stApp {{ font-family: 'Pretendard', sans-serif !important; }}
-.material-symbols-rounded, .material-icons, span[class*="material"] {{ font-family: 'Material Symbols Rounded', 'Material Icons' !important; }}
 
+/* 일반 텍스트 요소에만 폰트를 적용하고 !important를 빼서 아이콘 폰트를 보호합니다. */
+html, body, p, a, h1, h2, h3, h4, h5, h6, label, input, button, select, div, th, td {{
+    font-family: 'Pretendard', sans-serif;
+}}
+/* 스트림릿 내부 아이콘 클래스는 원래 폰트를 강제 유지시킵니다. */
+.material-symbols-rounded, .material-icons, [class*="icon"], [data-baseweb="icon"] {{
+    font-family: 'Material Symbols Rounded', 'Material Icons', sans-serif !important;
+}}
+
+/* 최상위 배경 이미지 */
 .stApp {{
     background: linear-gradient(135deg, rgba(255,255,255,0.45), rgba(255,255,255,0.25)), url("data:image/png;base64,{bg_base64}");
     background-size: cover;
@@ -64,152 +72,156 @@ html, body, .stApp {{ font-family: 'Pretendard', sans-serif !important; }}
 }}
 
 header[data-testid="stHeader"] {{ background: transparent !important; }}
-
-/* 글씨 뒤 네온(Shadow) 효과 완전 삭제 */
 h1, h2, h3, h4, h5, h6, label {{ text-shadow: none !important; }}
 
+/* 스트림릿 기본 불투명막 날리기 */
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"] {{
+    background: transparent !important;
+}}
+
 /* ========================================================================= */
-/* ✅ 1. 메인 유리 블럭 (Setup 탭의 큰 그룹, 폼, 익스팬더 전체) */
+/* ✅ 2. 블럭 배경: 흐릿한(Frosted) 유리 질감 적용 및 테두리 완벽 제거 */
 /* ========================================================================= */
 [data-testid="stForm"], 
 [data-testid="stExpander"], 
-[data-testid="stVerticalBlockBorderWrapper"], 
-.title-glass-container {{
-    background: rgba(255, 255, 255, 0.45) !important; 
+[data-testid="stVerticalBlockBorderWrapper"] {{
+    background: rgba(255, 255, 255, 0.25) !important; /* 약간의 불투명도를 주어 블러가 잘 보이게 함 */
     backdrop-filter: blur(36px) saturate(120%) !important; 
     -webkit-backdrop-filter: blur(36px) saturate(120%) !important;
-    border: none !important; 
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.05) !important; 
-    border-radius: 20px !important; 
-    padding: 24px;
-    margin-bottom: 16px;
+    border: none !important; /* 테두리선 완전히 삭제 */
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.05) !important; /* 은은한 그림자로만 깊이감 표현 */
+    border-radius: 24px !important; 
+    padding: 24px !important;
+    margin-bottom: 16px !important;
 }}
 
-/* ========================================================================= */
-/* ✅ 2. 중첩된 내부 유리 블럭 (변수 1, 변수 2 등 개별 입력칸 묶음) */
-/* ========================================================================= */
+/* 내부 중첩 소형 유리 블럭 */
 [data-testid="stVerticalBlockBorderWrapper"] [data-testid="stVerticalBlockBorderWrapper"] {{
-    background: rgba(255, 255, 255, 0.25) !important;
-    backdrop-filter: blur(16px) saturate(120%) !important;
-    -webkit-backdrop-filter: blur(16px) saturate(120%) !important;
-    border-radius: 12px !important;
+    background: rgba(255, 255, 255, 0.3) !important;
+    backdrop-filter: blur(24px) !important;
+    -webkit-backdrop-filter: blur(24px) !important;
+    border-radius: 16px !important;
     padding: 16px !important;
-    box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.6), 0 2px 8px rgba(0,0,0,0.03) !important;
     margin-bottom: 12px !important;
+    border: none !important; /* 선 삭제 */
+    box-shadow: none !important;
 }}
 
-/* 사이드바 예외 처리 */
+/* 사이드바 블럭 겹침 방지 */
 [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {{
-    background: transparent !important; backdrop-filter: none !important; box-shadow: none !important; padding: 0 !important;
+    background: transparent !important; backdrop-filter: none !important; box-shadow: none !important; padding: 0 !important; border: none !important;
 }}
 
+/* 타이틀 로고 박스 */
 .title-glass-container {{
+    background: rgba(255, 255, 255, 0.15) !important; 
+    backdrop-filter: blur(48px) saturate(150%) !important; 
+    -webkit-backdrop-filter: blur(48px) saturate(150%) !important;
+    border: none !important; /* 선 삭제 */
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05) !important;
+    border-radius: 20px !important; 
     padding: 16px 24px;
     margin-bottom: 24px;
     margin-top: -10px;
     display: flex;
     align-items: center;
-    border-left: 6px solid #ed542b !important; 
-    border-radius: 20px !important;
 }}
 .title-glass-container h2 {{ margin: 0; padding: 0; line-height: 1.1; display: flex; align-items: center; }}
 
-/* 탭(Tabs) 컨트롤 */
+/* ========================================================================= */
+/* ✅ 3. 상단 탭(Tabs) 선택 시 투명도 및 유리 디자인 (곡률 부여) */
+/* ========================================================================= */
 [data-testid="stTabs"] [data-baseweb="tab-list"] {{
     background: transparent !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    padding: 0 12px !important;
-    gap: 20px; 
     border: none !important;
-    box-shadow: none !important;
-    margin-bottom: 16px;
+    gap: 16px !important; 
+    margin-bottom: 16px !important;
 }}
 [data-testid="stTabs"] [data-baseweb="tab"] {{
     background: transparent !important;
     border: none !important;
-    border-radius: 0 !important;
     color: #7a716c !important;
-    padding: 10px 4px !important; 
+    padding: 12px 24px !important; 
     font-weight: 800 !important;
     font-size: 1.1rem !important;
-    box-shadow: none !important;
-    transition: all 0.2s ease;
+    border-radius: 16px !important; /* 탭 버튼 자체에 곡률 */
+    transition: all 0.3s ease;
 }}
 [data-testid="stTabs"] [aria-selected="true"] {{
-    background: transparent !important; 
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
+    background: rgba(255, 255, 255, 0.5) !important; /* 선택된 탭 반투명 배경 */
+    backdrop-filter: blur(20px) !important; /* 유리 질감 부여 */
+    -webkit-backdrop-filter: blur(20px) !important;
     color: #ed542b !important;
-    box-shadow: none !important;
-    border-bottom: 3px solid #ed542b !important; 
+    box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important;
+    border-bottom: none !important; /* 기존 빨간 밑줄 렌더링 삭제 */
 }}
 
-/* 폼 내부에 변수별로 묶인 소그룹 (Tab 1 신규 입력용) */
+/* 폼 내부 소그룹 블럭 */
 [data-testid="stForm"] [data-testid="column"] {{
-    background: rgba(255, 255, 255, 0.4);
+    background: rgba(255, 255, 255, 0.25) !important;
     backdrop-filter: blur(24px) !important;
-    border: none !important;
-    border-radius: 12px;
+    border: none !important; /* 테두리 삭제 */
+    border-radius: 16px;
     padding: 16px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
     margin-bottom: 12px;
 }}
 
-/* 입력칸(Input): 푹 파인 투명 캡슐 */
+/* 입력칸(Input): 내부 파임 유지 */
 div[data-baseweb="input"], div[data-baseweb="select"] > div {{
-    background: rgba(255, 255, 255, 0.65) !important; 
-    backdrop-filter: blur(16px) !important;
-    -webkit-backdrop-filter: blur(16px) !important;
-    border-radius: 8px !important; 
-    border: 1px solid rgba(255, 255, 255, 0.9) !important; 
-    box-shadow: inset 0 2px 6px rgba(0,0,0,0.04) !important; 
-    transition: all 0.2s ease !important;
-    overflow: hidden !important; 
+    background: rgba(255, 255, 255, 0.6) !important; 
+    backdrop-filter: blur(12px) !important;
+    border-radius: 12px !important; 
+    border: 1px solid rgba(255, 255, 255, 0.5) !important; 
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.03) !important; 
 }}
 div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-within {{
     background: rgba(255,255,255,0.9) !important;
-    box-shadow: inset 0 1px 3px rgba(237,84,43,0.1), 0 0 0 2px rgba(237,84,43,0.3) !important;
+    border-color: #ed542b !important;
 }}
 div[data-baseweb="input"] > div {{ background: transparent !important; border: none !important; }}
 
-/* 파일 업로더 오류 방어 */
+/* 파일 업로더 CSS 충돌 분리 */
 [data-testid="stFileUploader"] {{
-    background: rgba(255, 255, 255, 0.15);
-    backdrop-filter: blur(30px);
-    border: 2px dashed rgba(237, 84, 43, 0.4);
-    border-radius: 16px;
-    padding: 16px;
+    background: rgba(255, 255, 255, 0.2) !important;
+    backdrop-filter: blur(24px) !important;
+    border: 2px dashed rgba(237, 84, 43, 0.4) !important;
+    border-radius: 16px !important;
+    padding: 24px !important;
 }}
 [data-testid="stFileUploader"] section {{ background: transparent !important; }}
 
-/* 버튼 투명 글래스화 */
-.stButton > button {{
+/* 메인 버튼 */
+button[kind="secondary"] {{
     border-radius: 12px !important; 
     border: none !important;
     background: rgba(255,255,255,0.6) !important;
-    backdrop-filter: blur(20px) !important;
-    -webkit-backdrop-filter: blur(20px) !important;
+    backdrop-filter: blur(16px) !important;
     font-weight: 700 !important;
     color: #1a1a1a !important;
     box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important;
-    transition: all 0.2s ease !important;
 }}
-.stButton > button[kind="primary"] {{
+button[kind="primary"] {{
+    border-radius: 12px !important; 
     background: linear-gradient(135deg, #ed542b, #f68b21) !important;
+    border: none !important;
     color: white !important;
-    box-shadow: 0 6px 16px rgba(237,84,43,0.3) !important;
+    font-weight: 700 !important;
+    box-shadow: 0 4px 16px rgba(237,84,43,0.3) !important;
 }}
-.stButton > button:hover {{ transform: translateY(-2px); box-shadow: 0 8px 20px rgba(17,24,39,0.1) !important; }}
 
-/* 차트 배경 투명화 */
+/* ========================================================================= */
+/* ✅ 4. 차트 배경 삭제 후 캔버스에만 곡률 부여 (잘림 완벽 해결) */
+/* ========================================================================= */
 [data-testid="stVegaLiteChart"] {{
     background: transparent !important; 
-    border-radius: 16px !important;
-    border: none !important;
     padding: 0 !important; 
-    box-shadow: none !important;
-    overflow: visible !important;
+    border: none !important; 
+    box-shadow: none !important; 
+}}
+/* 그래프가 그려지는 캔버스 자체에만 둥글기를 주어 배경이 떠보이지 않게 함 */
+[data-testid="stVegaLiteChart"] canvas {{
+    border-radius: 16px !important; 
 }}
 </style>
 """
@@ -297,7 +309,6 @@ if st.session_state.app_mode == "Setup":
             load_excel_data(uploaded_file)
             st.rerun()
     
-    # ✅ 헤더와 입력칸을 완전히 하나의 거대한 유리 블럭으로 묶음
     with st.container(border=True):
         colored_header(label="기본 프로젝트 설정", description="실험 이름과 최적화 목표 지표를 설정하세요.", color_name="orange-70")
         st.session_state.exp_name = st.text_input("📝 실험 프로젝트 이름", value=st.session_state.exp_name, placeholder="예: NBEDL_Experiment_01")
@@ -309,12 +320,11 @@ if st.session_state.app_mode == "Setup":
         passive_val = ",".join(st.session_state.passive_vars) if st.session_state.passive_vars else ""
         passive_input = col_t3.text_input("환경 변수 (쉼표 구분)", value=passive_val, placeholder="예: 온도 (°C), 습도 (%)")
     
-    # ✅ 최적화 대상도 헤더부터 전체를 하나의 거대 유리 블럭으로 묶음
     with st.container(border=True):
         colored_header(label="🔬 최적화 대상 공정 변수 입력", description="AI가 탐색할 공정 조건의 이름과 변수 범위를 지정하세요.", color_name="orange-70")
         
         for i, var in enumerate(st.session_state.config_vars):
-            with st.container(border=True): # 내부의 작은 유리 블럭
+            with st.container(border=True): 
                 c1, c_u, c2, c3, c4 = st.columns([2, 1, 2, 2, 2])
                 var["Name"] = c1.text_input(f"변수 {i+1} 이름", value=var.get("Name", ""), key=f"name_{i}", placeholder="예: 스핀코팅 속도1")
                 var["Unit"] = c_u.text_input("단위", value=var.get("Unit", ""), key=f"unit_{i}", placeholder="예: rpm")
@@ -425,56 +435,55 @@ elif st.session_state.app_mode == "Dashboard":
     tab1, tab2, tab3 = st.tabs(["📝 신규 실험 입력", "🗂️ 데이터베이스 관리", "🤖 AI 최적화 대시보드"])
 
     with tab1:
-        # 이 탭은 st.form 이 자체가 거대한 유리 블럭 역할을 합니다.
-        colored_header(label="새로운 스플릿 실험 결과 입력", description="값을 모두 적은 후 하단 '데이터 추가' 버튼을 클릭하세요.", color_name="orange-70")
-        with st.form("input_form", clear_on_submit=True):
-            cols = st.columns(len(st.session_state.passive_vars) + len(st.session_state.config_vars) + 1)
-            new_row = {"학습_적용": True}
-            idx = 0
-            
-            label_style = "<div style='font-size: 14px; font-weight: 800; padding-bottom: 8px; color: #1a1a1a;'>{}</div>"
-            
-            for p_var in st.session_state.passive_vars:
-                with cols[idx]:
-                    st.markdown(label_style.format(p_var), unsafe_allow_html=True)
-                    new_row[p_var] = st.text_input(p_var, value="", label_visibility="collapsed", key=f"input_{p_var}")
-                idx += 1
+        with st.container(border=True):
+            colored_header(label="새로운 스플릿 실험 결과 입력", description="값을 모두 적은 후 하단 '데이터 추가' 버튼을 클릭하세요.", color_name="orange-70")
+            with st.form("input_form", clear_on_submit=True):
+                cols = st.columns(len(st.session_state.passive_vars) + len(st.session_state.config_vars) + 1)
+                new_row = {"학습_적용": True}
+                idx = 0
                 
-            for var in st.session_state.config_vars:
-                unit_str = f" ({var['Unit']})" if var.get("Unit") else ""
-                disp_name = f"{var['Name']}{unit_str}"
-                with cols[idx]:
-                    st.markdown(label_style.format(disp_name), unsafe_allow_html=True)
-                    if "Real" in var["Type"]:
-                        new_row[var["Name"]] = st.number_input(disp_name, value=float(var["Min"]), step=0.1, label_visibility="collapsed", key=f"input_{var['Name']}")
-                    elif "Integer" in var["Type"]:
-                        new_row[var["Name"]] = st.number_input(disp_name, value=int(var["Min"]), step=1, label_visibility="collapsed", key=f"input_{var['Name']}")
-                    elif "Categorical" in var["Type"]:
-                        opts = [o.strip() for o in var["Options"].split(",")]
-                        new_row[var["Name"]] = st.selectbox(disp_name, opts, label_visibility="collapsed", key=f"input_{var['Name']}")
-                idx += 1
+                label_style = "<div style='font-size: 14px; font-weight: 800; padding-bottom: 8px; color: #1a1a1a;'>{}</div>"
                 
-            with cols[idx]:
-                st.markdown(label_style.format(f"결과값 ({t_name})"), unsafe_allow_html=True)
-                new_row[t_name] = st.number_input(t_name, value=0.0, label_visibility="collapsed", key="input_target")
-            
-            st.write("") 
-            submitted = st.form_submit_button("➕ 데이터 추가", type="primary", use_container_width=True)
-            if submitted:
-                st.session_state.df_data = pd.concat([st.session_state.df_data, pd.DataFrame([new_row])], ignore_index=True)
-                st.success("데이터 저장 완료! 데이터베이스 관리 탭에서 확인하세요.")
-                st.rerun()
+                for p_var in st.session_state.passive_vars:
+                    with cols[idx]:
+                        st.markdown(label_style.format(p_var), unsafe_allow_html=True)
+                        new_row[p_var] = st.text_input(p_var, value="", label_visibility="collapsed", key=f"input_{p_var}")
+                    idx += 1
+                    
+                for var in st.session_state.config_vars:
+                    unit_str = f" ({var['Unit']})" if var.get("Unit") else ""
+                    disp_name = f"{var['Name']}{unit_str}"
+                    with cols[idx]:
+                        st.markdown(label_style.format(disp_name), unsafe_allow_html=True)
+                        if "Real" in var["Type"]:
+                            new_row[var["Name"]] = st.number_input(disp_name, value=float(var["Min"]), step=0.1, label_visibility="collapsed", key=f"input_{var['Name']}")
+                        elif "Integer" in var["Type"]:
+                            new_row[var["Name"]] = st.number_input(disp_name, value=int(var["Min"]), step=1, label_visibility="collapsed", key=f"input_{var['Name']}")
+                        elif "Categorical" in var["Type"]:
+                            opts = [o.strip() for o in var["Options"].split(",")]
+                            new_row[var["Name"]] = st.selectbox(disp_name, opts, label_visibility="collapsed", key=f"input_{var['Name']}")
+                    idx += 1
+                    
+                with cols[idx]:
+                    st.markdown(label_style.format(f"결과값 ({t_name})"), unsafe_allow_html=True)
+                    new_row[t_name] = st.number_input(t_name, value=0.0, label_visibility="collapsed", key="input_target")
+                
+                st.write("") 
+                submitted = st.form_submit_button("➕ 데이터 추가", type="primary", use_container_width=True)
+                if submitted:
+                    st.session_state.df_data = pd.concat([st.session_state.df_data, pd.DataFrame([new_row])], ignore_index=True)
+                    st.success("데이터 저장 완료! 데이터베이스 관리 탭에서 확인하세요.")
+                    st.rerun()
 
-        if st.button("↩️ 마지막 입력 취소 (직전 데이터 삭제)"):
-            if not st.session_state.df_data.empty:
-                st.session_state.df_data = st.session_state.df_data.iloc[:-1] 
-                st.success("가장 최근 데이터가 삭제되었습니다.")
-                st.rerun()
-            else:
-                st.warning("삭제할 데이터가 없습니다.")
+            if st.button("↩️ 마지막 입력 취소 (직전 데이터 삭제)"):
+                if not st.session_state.df_data.empty:
+                    st.session_state.df_data = st.session_state.df_data.iloc[:-1] 
+                    st.success("가장 최근 데이터가 삭제되었습니다.")
+                    st.rerun()
+                else:
+                    st.warning("삭제할 데이터가 없습니다.")
 
     with tab2:
-        # ✅ 데이터베이스 관리 화면도 거대한 유리 블럭으로 감싸기
         with st.container(border=True):
             colored_header(label="전체 실험 데이터 아카이브", description="입력 이력을 한눈에 검토하고 이상치 데이터의 AI 반영 여부를 수정할 수 있습니다.", color_name="orange-70")
             st.session_state.df_data = st.data_editor(
@@ -489,7 +498,6 @@ elif st.session_state.app_mode == "Dashboard":
         c1, c2 = st.columns([1.2, 1])
 
         with c1:
-            # ✅ 차트 화면 거대 유리 블럭
             with st.container(border=True):
                 colored_header(label=f"📈 최적화 경향 곡선", description=f"실험이 진행됨에 따라 타겟 지표({t_name})의 수렴 상태를 보여줍니다.", color_name="green-70")
                 if len(valid_df) > 0:
@@ -499,7 +507,6 @@ elif st.session_state.app_mode == "Dashboard":
                     st.info("분석용 데이터가 입력되지 않았습니다.")
 
         with c2:
-            # ✅ AI 추천 화면 거대 유리 블럭
             with st.container(border=True):
                 colored_header(label="🤖 베이지안 추천 차기 조건", description="가우시안 프로세스 알고리즘에 기반하여 제안된 3가지 최적 조건 셋입니다.", color_name="orange-70")
                 if st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
@@ -534,7 +541,7 @@ elif st.session_state.app_mode == "Dashboard":
                         st.session_state.prev_next_points = next_points
                             
                         for i, points in enumerate(next_points):
-                            with st.container(border=True): # 내부의 작은 유리 블럭
+                            with st.container(border=True): 
                                 st.markdown(f"<h5 style='margin:0; font-weight: 800; color: #ed542b;'>실험 후보 {i+1}</h5>", unsafe_allow_html=True)
                                 st.divider()
                                 cols_rec = st.columns(len(f_names))
