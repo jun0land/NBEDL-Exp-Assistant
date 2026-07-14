@@ -34,7 +34,7 @@ components.html(
 )
 
 # ==========================================
-# 2. 이미지 Base64 인코딩 & 글로벌 UI/UX CSS 주입
+# 2. 이미지 Base64 인코딩 & iOS Liquid Glass CSS
 # ==========================================
 def get_base64_of_bin_file(bin_file):
     if os.path.exists(bin_file):
@@ -46,72 +46,59 @@ def get_base64_of_bin_file(bin_file):
 bg_base64 = get_base64_of_bin_file('liquid_bg.png')
 logo_base64 = get_base64_of_bin_file('logo.png')
 
-# 로고와 텍스트의 완벽한 중앙 정렬
 logo_html = f'<img src="data:image/png;base64,{logo_base64}" height="42" style="vertical-align: middle; margin-right: 12px; margin-bottom: 0px;">' if logo_base64 else ""
 
 custom_css = f"""
 <style>
-/* 전역 글꼴 Pretendard 강제 적용 */
+/* 전역 글꼴 Pretendard (네온/그림자 효과 완벽 삭제) */
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
 * {{ font-family: 'Pretendard', sans-serif !important; }}
 
 .stApp {{
-    background: linear-gradient(135deg, rgba(255,255,255,0.40), rgba(247,239,232,0.28)), url("data:image/png;base64,{bg_base64}");
+    /* 배경이 너무 어둡지 않도록 화이트 오버레이 추가 */
+    background: linear-gradient(135deg, rgba(255,255,255,0.45), rgba(255,255,255,0.25)), url("data:image/png;base64,{bg_base64}");
     background-size: cover;
     background-position: center;
     background-attachment: fixed;
-    color: #241d1a;
+    color: #1a1a1a;
 }}
 
 header[data-testid="stHeader"] {{ background: transparent !important; }}
 
-/* 텍스트 배경색 대비 가독성 확보 (흰색 후광 렌더링) */
-p, span, label, h1, h2, h3, h4, h5, h6, li {{
-    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.9), 0 0 6px rgba(255, 255, 255, 0.6);
-}}
-button span, .stButton button p {{ text-shadow: none !important; }}
-
-[data-testid="stSidebar"] {{
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.66), rgba(255, 255, 255, 0.46)) !important;
-    backdrop-filter: blur(22px) saturate(145%) !important;
-    -webkit-backdrop-filter: blur(22px) saturate(145%) !important;
-    border-right: 1px solid rgba(255, 255, 255, 0.56) !important;
+/* ✅ 공통 유리 블럭 (Liquid Glass) 스타일 */
+.glass-block, [data-testid="stForm"], [data-testid="stExpander"], .title-glass-container, [data-testid="stVegaLiteChart"] {{
+    background: rgba(255, 255, 255, 0.45) !important;
+    backdrop-filter: blur(24px) saturate(150%) !important;
+    -webkit-backdrop-filter: blur(24px) saturate(150%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.7) !important;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08), inset 0 1px 2px rgba(255,255,255,0.6) !important;
+    border-radius: 12px !important; /* 날렵한 곡률 유지 */
 }}
 
-/* ✅ 타이틀 전용 배경: 테두리 없이 우측으로 갈수록 투명해지는 직사각형 페이드아웃 배경 */
+/* ✅ 타이틀 전용 배경 (그라데이션 없애고 단단한 블럭화) */
 .title-glass-container {{
-    background: linear-gradient(to right, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.5) 40%, rgba(255,255,255,0) 100%);
-    padding: 16px 24px 16px 20px;
+    padding: 16px 24px;
     margin-bottom: 24px;
     margin-top: -10px;
-    margin-left: -1rem;
     display: flex;
     align-items: center;
-    border-left: 5px solid #ed542b; /* 포인트 라인 */
+    border-left: 6px solid #ed542b !important; /* 포인트 컬러 엣지 */
 }}
 .title-glass-container h2 {{ 
     margin: 0; color: #1a1a1a; font-weight: 800; padding: 0; line-height: 1.1; display: flex; align-items: center; 
 }}
 
-/* 메인 폼, 데이터 그리드 등 카드 컨테이너 (곡률 낮춤 20px -> 12px) */
-[data-testid="stForm"], [data-testid="stExpander"] {{
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.86), rgba(252, 248, 244, 0.82)) !important;
-    backdrop-filter: blur(18px) !important;
-    border: 1px solid rgba(255,255,255,0.58) !important;
-    box-shadow: 0 16px 40px rgba(17, 24, 39, 0.08) !important;
-    border-radius: 12px !important;
-    padding: 24px;
-}}
+/* 메인 폼, 익스팬더 패딩 설정 */
+[data-testid="stForm"], [data-testid="stExpander"] {{ padding: 24px; }}
 
-/* 상단 탭(Tabs) 영역 가독성 강화 디자인 */
+/* 상단 탭(Tabs) - iOS 세그먼트 컨트롤 스타일 */
 [data-testid="stTabs"] [data-baseweb="tab-list"] {{
-    background: rgba(255, 255, 255, 0.55);
-    backdrop-filter: blur(12px);
-    padding: 6px;
+    background: rgba(255, 255, 255, 0.35);
+    backdrop-filter: blur(16px);
+    padding: 4px;
     border-radius: 12px;
     gap: 4px;
-    border: 1px solid rgba(255,255,255,0.8);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    border: 1px solid rgba(255,255,255,0.6);
 }}
 [data-testid="stTabs"] [data-baseweb="tab"] {{
     background: transparent !important;
@@ -125,24 +112,24 @@ button span, .stButton button p {{ text-shadow: none !important; }}
 [data-testid="stTabs"] [aria-selected="true"] {{
     background: rgba(255, 255, 255, 0.95) !important;
     color: #ed542b !important;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.08) !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08) !important;
 }}
 
-/* ✅ 입력칸과 글자(라벨)를 모두 감싸는 개별 유리 블럭 컨테이너 */
+/* ✅ 라벨과 입력칸을 통째로 묶는 개별 유리 블럭 컨테이너 */
 [data-testid="stForm"] [data-testid="column"] {{
-    background: linear-gradient(135deg, rgba(255,255,255,0.6), rgba(255,255,255,0.3));
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(255,255,255,0.8);
+    background: rgba(255, 255, 255, 0.35);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.7);
     border-radius: 10px;
-    padding: 14px 16px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.04), inset 0 2px 4px rgba(255,255,255,0.6);
+    padding: 16px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04), inset 0 1px 2px rgba(255, 255, 255, 0.8);
     margin-bottom: 12px;
 }}
 
-/* ✅ 내부 입력칸(Input) - 배경을 반투명하게 하고 테두리를 단정하게 (곡률 낮춤) */
+/* ✅ 내부 입력칸(Input) - 진짜 유리처럼 매끄럽게 */
 div[data-baseweb="input"], div[data-baseweb="select"] > div {{
     background: rgba(255,255,255,0.7) !important; 
-    border-radius: 6px !important; /* 각진 느낌 강화 */
+    border-radius: 8px !important; 
     border: 1px solid rgba(255,255,255,0.9) !important;
     box-shadow: inset 0 2px 4px rgba(0,0,0,0.02) !important;
     transition: all 0.2s ease !important;
@@ -155,38 +142,41 @@ div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-w
 }}
 div[data-baseweb="input"] > div {{ background: transparent !important; border: none !important; }}
 
-/* 오렌지 버튼 */
+/* ✅ 파일 업로더 컴포넌트 안전망 (버튼 글씨 겹침 해결) */
+[data-testid="stFileUploader"] {{
+    background: rgba(255, 255, 255, 0.35);
+    backdrop-filter: blur(12px);
+    border: 1px dashed rgba(237, 84, 43, 0.5);
+    border-radius: 12px;
+    padding: 16px;
+}}
+[data-testid="stFileUploader"] section {{ background: transparent !important; }}
+[data-testid="stFileUploader"] button {{ padding: 0.25rem 0.75rem !important; }} /* 내부버튼 보호 */
+
+/* 오렌지 버튼 (업로더 제외) */
 .stButton > button {{
-    border-radius: 8px !important; /* 각진 버튼 */
-    border: 1px solid rgba(255,255,255,0.55) !important;
-    background: rgba(255,255,255,0.4) !important;
+    border-radius: 8px !important; 
+    border: 1px solid rgba(255,255,255,0.7) !important;
+    background: rgba(255,255,255,0.6) !important;
     font-weight: 700 !important;
-    color: #241d1a !important;
-    backdrop-filter: blur(8px);
+    color: #1a1a1a !important;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important;
     transition: all 0.2s ease !important;
 }}
 .stButton > button[kind="primary"] {{
     background: linear-gradient(135deg, #ed542b, #f68b21) !important;
     border: none !important;
     color: white !important;
-    box-shadow: 0 4px 12px rgba(237,84,43,0.3) !important;
+    box-shadow: 0 6px 16px rgba(237,84,43,0.3) !important;
 }}
 .stButton > button:hover {{
     transform: translateY(-1px);
-    box-shadow: 0 6px 16px rgba(17,24,39,0.12) !important;
-    border-color: #ed542b !important;
-    color: white !important;
-    background: #ed542b !important;
+    box-shadow: 0 8px 20px rgba(17,24,39,0.1) !important;
 }}
 
-/* 차트 컨테이너 (그래프 튀어나감 완벽 방어) */
+/* 차트 컨테이너 (여백 넉넉히 주어 그래프 짤림 방지) */
 [data-testid="stVegaLiteChart"] {{
-    background: rgba(255,255,255,0.6) !important;
-    backdrop-filter: blur(10px) !important;
-    border-radius: 12px !important;
-    border: 1px solid rgba(255,255,255,0.8) !important;
-    padding: 0 !important; 
-    box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important;
+    padding: 16px !important; 
     overflow: hidden !important;
 }}
 </style>
@@ -261,7 +251,7 @@ def load_excel_data(uploaded_file):
 # [화면 A] 실험 세팅 모드 (Setup)
 # ==========================================
 if st.session_state.app_mode == "Setup":
-    # 개선된 투명 그라데이션 타이틀 박스
+    # 단단한 유리 블럭 타이틀
     st.markdown(f"""
     <div class="title-glass-container">
         {logo_html}
@@ -363,7 +353,7 @@ elif st.session_state.app_mode == "Dashboard":
     
     display_exp_name = st.session_state.exp_name if st.session_state.exp_name.strip() else "NBEDL_Experiment"
     
-    # 개선된 투명 그라데이션 타이틀 박스
+    # 단단한 유리 블럭 타이틀
     st.markdown(f"""
     <div class="title-glass-container">
         {logo_html}
@@ -411,8 +401,8 @@ elif st.session_state.app_mode == "Dashboard":
             new_row = {"학습_적용": True}
             idx = 0
             
-            # 라벨 텍스트 스타일: 마진을 줄여 래퍼 박스 안에서 깔끔하게 정렬되도록 수정
-            label_style = "<div style='font-size: 14px; font-weight: 800; padding-bottom: 6px; color: #1a1a1a;'>{}</div>"
+            # 라벨 텍스트 스타일: 마진을 줄이고 색상을 뚜렷하게
+            label_style = "<div style='font-size: 14px; font-weight: 800; padding-bottom: 8px; color: #1a1a1a;'>{}</div>"
             
             for p_var in st.session_state.passive_vars:
                 with cols[idx]:
@@ -473,7 +463,7 @@ elif st.session_state.app_mode == "Dashboard":
         c1, c2 = st.columns([1.2, 1])
 
         with c1:
-            # ✅ 중복 텍스트 삭제 및 깔끔한 제목
+            # 중복 텍스트 없는 깔끔한 제목
             colored_header(label=f"📈 최적화 경향 곡선", description=f"실험이 진행됨에 따라 타겟 지표({t_name})의 수렴 상태를 보여줍니다.", color_name="green-70")
             if len(valid_df) > 0:
                 chart_data = valid_df[t_name].expanding().max() if "Maximize" in t_dir else valid_df[t_name].expanding().min()
@@ -521,7 +511,7 @@ elif st.session_state.app_mode == "Dashboard":
                             for idx, (var, val) in enumerate(zip(st.session_state.config_vars, points)):
                                 unit_str = f" {var['Unit']}" if var.get("Unit") else ""
                                 cols_rec[idx].metric(label=var["Name"], value=f"{round(val, 3)}{unit_str}")
-                            style_metric_cards(background_color="rgba(255,255,255,0.4)", border_left_color="#ed542b", border_color="rgba(255,255,255,0.6)", box_shadow=False)
+                            style_metric_cards(background_color="rgba(255,255,255,0.45)", border_left_color="#ed542b", border_color="rgba(255,255,255,0.7)", box_shadow=False)
                     
                     with st.expander("🔍 AI 연산 피팅 로그 데이터"):
                         debug_df = pd.DataFrame(X_train, columns=f_names)
