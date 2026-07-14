@@ -11,23 +11,20 @@ from streamlit_extras.colored_header import colored_header
 from streamlit_extras.metric_cards import style_metric_cards
 
 # ==========================================
-# 1. 페이지 기본 설정 및 이탈 방지 (+ 자동완성 차단 JS)
+# 1. 페이지 기본 설정 및 이탈 방지 (+ 자동완성 차단)
 # ==========================================
 st.set_page_config(page_title="NBEDL Exp Assistant", layout="wide")
 
 components.html(
     """
     <script>
-    // 페이지 이탈 방지
     window.onbeforeunload = function() {
         return "데이터가 저장되지 않았을 수 있습니다. 정말 나가시겠습니까?";
     };
-
-    // 꼼수: 브라우저의 귀찮은 자동완성/방문기록 드롭다운 강제 차단
     setInterval(function() {
         var inputs = document.querySelectorAll('input');
         inputs.forEach(function(input) {
-            input.setAttribute('autocomplete', 'new-password'); // off보다 강력한 차단 방법
+            input.setAttribute('autocomplete', 'new-password');
             input.setAttribute('data-lpignore', 'true');
         });
     }, 1000);
@@ -37,7 +34,7 @@ components.html(
 )
 
 # ==========================================
-# 2. 이미지 Base64 인코딩 & 고도화된 글래스모피즘 CSS
+# 2. 이미지 Base64 인코딩 & 글로벌 UI/UX CSS 주입
 # ==========================================
 def get_base64_of_bin_file(bin_file):
     if os.path.exists(bin_file):
@@ -49,22 +46,30 @@ def get_base64_of_bin_file(bin_file):
 bg_base64 = get_base64_of_bin_file('liquid_bg.png')
 logo_base64 = get_base64_of_bin_file('logo.png')
 
-logo_html = f'<img src="data:image/png;base64,{logo_base64}" height="42" style="vertical-align: middle; margin-right: 14px;">' if logo_base64 else ""
+# 로고와 텍스트의 완벽한 중앙 정렬
+logo_html = f'<img src="data:image/png;base64,{logo_base64}" height="42" style="vertical-align: middle; margin-right: 12px; margin-bottom: 0px;">' if logo_base64 else ""
 
 custom_css = f"""
 <style>
+/* 전역 글꼴 Pretendard 강제 적용 */
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+* {{ font-family: 'Pretendard', sans-serif !important; }}
 
 .stApp {{
     background: linear-gradient(135deg, rgba(255,255,255,0.40), rgba(247,239,232,0.28)), url("data:image/png;base64,{bg_base64}");
     background-size: cover;
     background-position: center;
     background-attachment: fixed;
-    font-family: 'Pretendard', sans-serif !important;
     color: #241d1a;
 }}
 
 header[data-testid="stHeader"] {{ background: transparent !important; }}
+
+/* 텍스트 배경색 대비 가독성 확보 (흰색 후광 렌더링) */
+p, span, label, h1, h2, h3, h4, h5, h6, li {{
+    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.9), 0 0 6px rgba(255, 255, 255, 0.6);
+}}
+button span, .stButton button p {{ text-shadow: none !important; }}
 
 [data-testid="stSidebar"] {{
     background: linear-gradient(135deg, rgba(255, 255, 255, 0.66), rgba(255, 255, 255, 0.46)) !important;
@@ -73,73 +78,92 @@ header[data-testid="stHeader"] {{ background: transparent !important; }}
     border-right: 1px solid rgba(255, 255, 255, 0.56) !important;
 }}
 
-/* ✅ 타이틀 전용 글래스 컨테이너 (배경과 구분감 확보) */
+/* ✅ 타이틀 전용 배경: 테두리 없이 우측으로 갈수록 투명해지는 직사각형 페이드아웃 배경 */
 .title-glass-container {{
-    background: linear-gradient(135deg, rgba(255,255,255,0.7), rgba(255,255,255,0.4));
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(255,255,255,0.6);
-    border-radius: 20px;
-    padding: 16px 24px;
+    background: linear-gradient(to right, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.5) 40%, rgba(255,255,255,0) 100%);
+    padding: 16px 24px 16px 20px;
     margin-bottom: 24px;
     margin-top: -10px;
-    box-shadow: 0 10px 30px rgba(17, 24, 39, 0.08), inset 0 2px 4px rgba(255,255,255,0.8);
+    margin-left: -1rem;
     display: flex;
     align-items: center;
+    border-left: 5px solid #ed542b; /* 포인트 라인 */
 }}
-.title-glass-container h2 {{ margin: 0; color: #241d1a; font-weight: 800; padding-bottom: 0; }}
+.title-glass-container h2 {{ 
+    margin: 0; color: #1a1a1a; font-weight: 800; padding: 0; line-height: 1.1; display: flex; align-items: center; 
+}}
 
-/* 폼, 탭 안쪽 패널, 아코디언 등 메인 카드 */
+/* 메인 폼, 데이터 그리드 등 카드 컨테이너 (곡률 낮춤 20px -> 12px) */
 [data-testid="stForm"], [data-testid="stExpander"] {{
     background: linear-gradient(135deg, rgba(255, 255, 255, 0.86), rgba(252, 248, 244, 0.82)) !important;
     backdrop-filter: blur(18px) !important;
-    -webkit-backdrop-filter: blur(18px) !important;
     border: 1px solid rgba(255,255,255,0.58) !important;
-    box-shadow: 0 20px 60px rgba(17, 24, 39, 0.12) !important;
-    border-radius: 20px !important;
+    box-shadow: 0 16px 40px rgba(17, 24, 39, 0.08) !important;
+    border-radius: 12px !important;
     padding: 24px;
 }}
 
-[data-testid="stTabs"] button {{
-    font-family: 'Pretendard', sans-serif !important;
-    font-weight: 700 !important;
-    font-size: 1.1rem !important;
+/* 상단 탭(Tabs) 영역 가독성 강화 디자인 */
+[data-testid="stTabs"] [data-baseweb="tab-list"] {{
+    background: rgba(255, 255, 255, 0.55);
+    backdrop-filter: blur(12px);
+    padding: 6px;
+    border-radius: 12px;
+    gap: 4px;
+    border: 1px solid rgba(255,255,255,0.8);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
 }}
-[data-testid="stTabs"] button[aria-selected="true"] {{
+[data-testid="stTabs"] [data-baseweb="tab"] {{
+    background: transparent !important;
+    border: none !important;
+    border-radius: 8px !important;
+    color: #5e5652 !important;
+    padding: 10px 18px !important;
+    font-weight: 800 !important;
+    font-size: 1.05rem !important;
+}}
+[data-testid="stTabs"] [aria-selected="true"] {{
+    background: rgba(255, 255, 255, 0.95) !important;
     color: #ed542b !important;
-    border-bottom-color: #ed542b !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08) !important;
 }}
 
-/* ✅ 입력 폼 (투명한 유리 블럭 느낌 + 내부 선 오류 해결) */
+/* ✅ 입력칸과 글자(라벨)를 모두 감싸는 개별 유리 블럭 컨테이너 */
+[data-testid="stForm"] [data-testid="column"] {{
+    background: linear-gradient(135deg, rgba(255,255,255,0.6), rgba(255,255,255,0.3));
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.8);
+    border-radius: 10px;
+    padding: 14px 16px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.04), inset 0 2px 4px rgba(255,255,255,0.6);
+    margin-bottom: 12px;
+}}
+
+/* ✅ 내부 입력칸(Input) - 배경을 반투명하게 하고 테두리를 단정하게 (곡률 낮춤) */
 div[data-baseweb="input"], div[data-baseweb="select"] > div {{
-    background: rgba(255,255,255,0.4) !important; /* 투명도를 높여 유리 느낌 강화 */
-    backdrop-filter: blur(8px) !important;
-    border-radius: 12px !important;
-    border: 1px solid rgba(255,255,255,0.7) !important;
-    box-shadow: inset 0 2px 4px rgba(0,0,0,0.04), 0 2px 6px rgba(0,0,0,0.02) !important;
+    background: rgba(255,255,255,0.7) !important; 
+    border-radius: 6px !important; /* 각진 느낌 강화 */
+    border: 1px solid rgba(255,255,255,0.9) !important;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.02) !important;
     transition: all 0.2s ease !important;
-    overflow: hidden !important; /* 내부 각진 선이 밖으로 튀어나오는 것 원천 차단 */
+    overflow: hidden !important; 
 }}
-
-/* 클릭(포커스) 시 겉면 글로우 효과 */
 div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-within {{
     border-color: #ed542b !important;
-    background: rgba(255,255,255,0.7) !important;
-    box-shadow: inset 0 1px 3px rgba(237,84,43,0.1), 0 0 0 3px rgba(237,84,43,0.15) !important;
+    background: rgba(255,255,255,0.95) !important;
+    box-shadow: inset 0 1px 3px rgba(237,84,43,0.1), 0 0 0 2px rgba(237,84,43,0.15) !important;
 }}
-
-/* 스트림릿 내부의 쓸데없는 기본 테두리 무력화 */
 div[data-baseweb="input"] > div {{ background: transparent !important; border: none !important; }}
-div[data-baseweb="input"] input {{ padding-top: 12px !important; padding-bottom: 12px !important; }}
 
+/* 오렌지 버튼 */
 .stButton > button {{
-    border-radius: 999px !important;
+    border-radius: 8px !important; /* 각진 버튼 */
     border: 1px solid rgba(255,255,255,0.55) !important;
-    background: rgba(255,255,255,0.34) !important;
+    background: rgba(255,255,255,0.4) !important;
     font-weight: 700 !important;
-    transition: all 0.25s ease !important;
     color: #241d1a !important;
     backdrop-filter: blur(8px);
+    transition: all 0.2s ease !important;
 }}
 .stButton > button[kind="primary"] {{
     background: linear-gradient(135deg, #ed542b, #f68b21) !important;
@@ -148,22 +172,22 @@ div[data-baseweb="input"] input {{ padding-top: 12px !important; padding-bottom:
     box-shadow: 0 4px 12px rgba(237,84,43,0.3) !important;
 }}
 .stButton > button:hover {{
-    transform: translateY(-2px);
+    transform: translateY(-1px);
     box-shadow: 0 6px 16px rgba(17,24,39,0.12) !important;
     border-color: #ed542b !important;
     color: white !important;
     background: #ed542b !important;
 }}
 
-/* ✅ 차트(그래프) 배경을 반투명 글래스 컨테이너로 감싸기 */
+/* 차트 컨테이너 (그래프 튀어나감 완벽 방어) */
 [data-testid="stVegaLiteChart"] {{
-    background: rgba(255,255,255,0.5) !important;
+    background: rgba(255,255,255,0.6) !important;
     backdrop-filter: blur(10px) !important;
-    -webkit-backdrop-filter: blur(10px) !important;
-    border-radius: 16px !important;
-    padding: 16px 20px !important;
+    border-radius: 12px !important;
     border: 1px solid rgba(255,255,255,0.8) !important;
-    box-shadow: inset 0 2px 4px rgba(255,255,255,0.5), 0 8px 24px rgba(0,0,0,0.06) !important;
+    padding: 0 !important; 
+    box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important;
+    overflow: hidden !important;
 }}
 </style>
 """
@@ -237,7 +261,7 @@ def load_excel_data(uploaded_file):
 # [화면 A] 실험 세팅 모드 (Setup)
 # ==========================================
 if st.session_state.app_mode == "Setup":
-    # 타이틀 글래스 카드 적용
+    # 개선된 투명 그라데이션 타이틀 박스
     st.markdown(f"""
     <div class="title-glass-container">
         {logo_html}
@@ -256,7 +280,7 @@ if st.session_state.app_mode == "Setup":
     
     col_t1, col_t2, col_t3 = st.columns(3)
     target_name = col_t1.text_input("목표 지표 이름", value=st.session_state.target_info["name"], placeholder="예: J_sc")
-    target_dir = col_t2.selectbox("최적화 방향", ["Maximize (최대화)", "Minimize (최소화)"])
+    target_dir = col_t2.selectbox("최적화 방향", ["Maximize", "Minimize"])
     
     passive_val = ",".join(st.session_state.passive_vars) if st.session_state.passive_vars else ""
     passive_input = col_t3.text_input("환경 변수 (쉼표 구분)", value=passive_val, placeholder="예: 온도 (°C), 습도 (%)")
@@ -339,7 +363,7 @@ elif st.session_state.app_mode == "Dashboard":
     
     display_exp_name = st.session_state.exp_name if st.session_state.exp_name.strip() else "NBEDL_Experiment"
     
-    # 타이틀 글래스 카드 적용
+    # 개선된 투명 그라데이션 타이틀 박스
     st.markdown(f"""
     <div class="title-glass-container">
         {logo_html}
@@ -387,7 +411,8 @@ elif st.session_state.app_mode == "Dashboard":
             new_row = {"학습_적용": True}
             idx = 0
             
-            label_style = "<div style='min-height: 35px; display: flex; align-items: flex-end; font-size: 14px; font-weight: 700; padding-bottom: 5px; color: #241d1a;'>{}</div>"
+            # 라벨 텍스트 스타일: 마진을 줄여 래퍼 박스 안에서 깔끔하게 정렬되도록 수정
+            label_style = "<div style='font-size: 14px; font-weight: 800; padding-bottom: 6px; color: #1a1a1a;'>{}</div>"
             
             for p_var in st.session_state.passive_vars:
                 with cols[idx]:
@@ -448,7 +473,8 @@ elif st.session_state.app_mode == "Dashboard":
         c1, c2 = st.columns([1.2, 1])
 
         with c1:
-            colored_header(label=f"📈 최적화 경향 곡선 ({t_dir})", description="실험 횟수가 누적됨에 따라 타겟 지표의 최고/최저 성과 수렴 상태를 보여줍니다.", color_name="green-70")
+            # ✅ 중복 텍스트 삭제 및 깔끔한 제목
+            colored_header(label=f"📈 최적화 경향 곡선", description=f"실험이 진행됨에 따라 타겟 지표({t_name})의 수렴 상태를 보여줍니다.", color_name="green-70")
             if len(valid_df) > 0:
                 chart_data = valid_df[t_name].expanding().max() if "Maximize" in t_dir else valid_df[t_name].expanding().min()
                 st.line_chart(chart_data, height=350)
