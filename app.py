@@ -10,218 +10,105 @@ import streamlit.components.v1 as components
 from streamlit_extras.colored_header import colored_header
 from streamlit_extras.metric_cards import style_metric_cards
 
-# ==========================================
-# 1. 페이지 기본 설정 및 이탈 방지
-# ==========================================
 st.set_page_config(page_title="NBEDL Exp Assistant", layout="wide")
 
 components.html(
     """
     <script>
-    window.onbeforeunload = function() {
-        return "데이터가 저장되지 않았을 수 있습니다. 정말 나가시겠습니까?";
-    };
+    window.onbeforeunload = function() { return "데이터가 저장되지 않았을 수 있습니다."; };
     setInterval(function() {
         var inputs = document.querySelectorAll('input');
         inputs.forEach(function(input) {
             input.setAttribute('autocomplete', 'new-password');
-            input.setAttribute('data-lpignore', 'true');
         });
     }, 1000);
     </script>
-    """,
-    height=0,
+    """, height=0,
 )
 
-# ==========================================
-# 2. 이미지 Base64 인코딩 & 버그 프리 Liquid Glass CSS
-# ==========================================
+# 이미지 인코딩
 def get_base64_of_bin_file(bin_file):
     if os.path.exists(bin_file):
-        with open(bin_file, 'rb') as f:
-            data = f.read()
-        return base64.b64encode(data).decode()
+        with open(bin_file, 'rb') as f: return base64.b64encode(f.read()).decode()
     return ""
 
 bg_base64 = get_base64_of_bin_file('liquid_bg.png')
 logo_base64 = get_base64_of_bin_file('logo.png')
+logo_html = f'<img src="data:image/png;base64,{logo_base64}" height="42" style="vertical-align: middle; margin-right: 12px;">' if logo_base64 else ""
 
-logo_html = f'<img src="data:image/png;base64,{logo_base64}" height="42" style="vertical-align: middle; margin-right: 12px; margin-bottom: 0px;">' if logo_base64 else ""
-
+# =========================================================================
+# ✅ 수정된 CSS (아이콘 보호, 블러 강화, 투명도 극대화)
+# =========================================================================
 custom_css = f"""
 <style>
-/* ✅ 1. 폰트 강제 주입으로 인한 꺽쇠/Upload 아이콘 깨짐 완벽 해결 */
-@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+/* 폰트 적용을 텍스트 요소로 한정하여 아이콘 폰트 보호 */
+html, body, p, h1, h2, h3, h4, h5, h6, label {{ font-family: 'Pretendard', sans-serif !important; }}
 
-/* 일반 텍스트 요소에만 폰트를 적용하고 !important를 빼서 아이콘 폰트를 보호합니다. */
-html, body, p, a, h1, h2, h3, h4, h5, h6, label, input, button, select, div, th, td {{
-    font-family: 'Pretendard', sans-serif;
-}}
-/* 스트림릿 내부 아이콘 클래스는 원래 폰트를 강제 유지시킵니다. */
-.material-symbols-rounded, .material-icons, [class*="icon"], [data-baseweb="icon"] {{
-    font-family: 'Material Symbols Rounded', 'Material Icons', sans-serif !important;
-}}
-
-/* 최상위 배경 이미지 */
 .stApp {{
     background: linear-gradient(135deg, rgba(255,255,255,0.45), rgba(255,255,255,0.25)), url("data:image/png;base64,{bg_base64}");
     background-size: cover;
-    background-position: center;
     background-attachment: fixed;
     color: #1a1a1a;
 }}
 
-header[data-testid="stHeader"] {{ background: transparent !important; }}
-h1, h2, h3, h4, h5, h6, label {{ text-shadow: none !important; }}
+/* 전체 텍스트 그림자 삭제 */
+* {{ text-shadow: none !important; }}
 
-/* 스트림릿 기본 불투명막 날리기 */
-[data-testid="stAppViewContainer"],
-[data-testid="stMain"] {{
-    background: transparent !important;
+/* 유리 블럭 레이어 */
+[data-testid="stForm"], [data-testid="stExpander"], [data-testid="stVerticalBlockBorderWrapper"], .title-glass-container {{
+    background: rgba(255, 255, 255, 0.15) !important;
+    backdrop-filter: blur(48px) saturate(150%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.3) !important;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.05) !important;
+    border-radius: 20px !important;
+    padding: 24px;
 }}
 
-/* ========================================================================= */
-/* ✅ 2. 블럭 배경: 흐릿한(Frosted) 유리 질감 적용 및 테두리 완벽 제거 */
-/* ========================================================================= */
-[data-testid="stForm"], 
-[data-testid="stExpander"], 
-[data-testid="stVerticalBlockBorderWrapper"] {{
-    background: rgba(255, 255, 255, 0.25) !important; /* 약간의 불투명도를 주어 블러가 잘 보이게 함 */
-    backdrop-filter: blur(36px) saturate(120%) !important; 
-    -webkit-backdrop-filter: blur(36px) saturate(120%) !important;
-    border: none !important; /* 테두리선 완전히 삭제 */
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.05) !important; /* 은은한 그림자로만 깊이감 표현 */
-    border-radius: 24px !important; 
-    padding: 24px !important;
-    margin-bottom: 16px !important;
-}}
-
-/* 내부 중첩 소형 유리 블럭 */
-[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stVerticalBlockBorderWrapper"] {{
-    background: rgba(255, 255, 255, 0.3) !important;
-    backdrop-filter: blur(24px) !important;
-    -webkit-backdrop-filter: blur(24px) !important;
-    border-radius: 16px !important;
-    padding: 16px !important;
-    margin-bottom: 12px !important;
-    border: none !important; /* 선 삭제 */
-    box-shadow: none !important;
-}}
-
-/* 사이드바 블럭 겹침 방지 */
-[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {{
-    background: transparent !important; backdrop-filter: none !important; box-shadow: none !important; padding: 0 !important; border: none !important;
-}}
-
-/* 타이틀 로고 박스 */
+/* 타이틀 박스 */
 .title-glass-container {{
-    background: rgba(255, 255, 255, 0.15) !important; 
-    backdrop-filter: blur(48px) saturate(150%) !important; 
-    -webkit-backdrop-filter: blur(48px) saturate(150%) !important;
-    border: none !important; /* 선 삭제 */
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05) !important;
-    border-radius: 20px !important; 
     padding: 16px 24px;
     margin-bottom: 24px;
-    margin-top: -10px;
-    display: flex;
-    align-items: center;
+    border-left: 6px solid #ed542b !important;
 }}
-.title-glass-container h2 {{ margin: 0; padding: 0; line-height: 1.1; display: flex; align-items: center; }}
 
-/* ========================================================================= */
-/* ✅ 3. 상단 탭(Tabs) 선택 시 투명도 및 유리 디자인 (곡률 부여) */
-/* ========================================================================= */
+/* 탭 디자인: 배경/테두리 완전 삭제 */
 [data-testid="stTabs"] [data-baseweb="tab-list"] {{
     background: transparent !important;
     border: none !important;
-    gap: 16px !important; 
-    margin-bottom: 16px !important;
+    gap: 20px !important;
 }}
 [data-testid="stTabs"] [data-baseweb="tab"] {{
     background: transparent !important;
     border: none !important;
     color: #7a716c !important;
-    padding: 12px 24px !important; 
     font-weight: 800 !important;
-    font-size: 1.1rem !important;
-    border-radius: 16px !important; /* 탭 버튼 자체에 곡률 */
-    transition: all 0.3s ease;
+    padding: 10px 4px !important;
 }}
 [data-testid="stTabs"] [aria-selected="true"] {{
-    background: rgba(255, 255, 255, 0.5) !important; /* 선택된 탭 반투명 배경 */
-    backdrop-filter: blur(20px) !important; /* 유리 질감 부여 */
-    -webkit-backdrop-filter: blur(20px) !important;
+    background: transparent !important;
     color: #ed542b !important;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important;
-    border-bottom: none !important; /* 기존 빨간 밑줄 렌더링 삭제 */
+    border-bottom: 3px solid #ed542b !important;
 }}
 
-/* 폼 내부 소그룹 블럭 */
-[data-testid="stForm"] [data-testid="column"] {{
-    background: rgba(255, 255, 255, 0.25) !important;
-    backdrop-filter: blur(24px) !important;
-    border: none !important; /* 테두리 삭제 */
-    border-radius: 16px;
-    padding: 16px;
-    margin-bottom: 12px;
-}}
-
-/* 입력칸(Input): 내부 파임 유지 */
+/* 입력칸 */
 div[data-baseweb="input"], div[data-baseweb="select"] > div {{
-    background: rgba(255, 255, 255, 0.6) !important; 
+    background: rgba(255, 255, 255, 0.5) !important;
     backdrop-filter: blur(12px) !important;
-    border-radius: 12px !important; 
-    border: 1px solid rgba(255, 255, 255, 0.5) !important; 
-    box-shadow: inset 0 2px 4px rgba(0,0,0,0.03) !important; 
-}}
-div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-within {{
-    background: rgba(255,255,255,0.9) !important;
-    border-color: #ed542b !important;
-}}
-div[data-baseweb="input"] > div {{ background: transparent !important; border: none !important; }}
-
-/* 파일 업로더 CSS 충돌 분리 */
-[data-testid="stFileUploader"] {{
-    background: rgba(255, 255, 255, 0.2) !important;
-    backdrop-filter: blur(24px) !important;
-    border: 2px dashed rgba(237, 84, 43, 0.4) !important;
-    border-radius: 16px !important;
-    padding: 24px !important;
-}}
-[data-testid="stFileUploader"] section {{ background: transparent !important; }}
-
-/* 메인 버튼 */
-button[kind="secondary"] {{
-    border-radius: 12px !important; 
-    border: none !important;
-    background: rgba(255,255,255,0.6) !important;
-    backdrop-filter: blur(16px) !important;
-    font-weight: 700 !important;
-    color: #1a1a1a !important;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important;
-}}
-button[kind="primary"] {{
-    border-radius: 12px !important; 
-    background: linear-gradient(135deg, #ed542b, #f68b21) !important;
-    border: none !important;
-    color: white !important;
-    font-weight: 700 !important;
-    box-shadow: 0 4px 16px rgba(237,84,43,0.3) !important;
+    border: 1px solid rgba(255,255,255,0.8) !important;
+    border-radius: 10px !important;
 }}
 
-/* ========================================================================= */
-/* ✅ 4. 차트 배경 삭제 후 캔버스에만 곡률 부여 (잘림 완벽 해결) */
-/* ========================================================================= */
+/* 그래프 */
 [data-testid="stVegaLiteChart"] {{
-    background: transparent !important; 
-    padding: 0 !important; 
-    border: none !important; 
-    box-shadow: none !important; 
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
 }}
-/* 그래프가 그려지는 캔버스 자체에만 둥글기를 주어 배경이 떠보이지 않게 함 */
-[data-testid="stVegaLiteChart"] canvas {{
-    border-radius: 16px !important; 
+
+.stButton > button {{
+    border-radius: 10px !important;
+    background: rgba(255,255,255,0.4) !important;
+    border: 1px solid rgba(255,255,255,0.6) !important;
 }}
 </style>
 """
