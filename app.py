@@ -2,134 +2,14 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
-import os
-import base64
 from skopt import Optimizer
 from skopt.space import Real, Integer, Categorical
-import streamlit.components.v1 as components
-from streamlit_extras.colored_header import colored_header
-from streamlit_extras.metric_cards import style_metric_cards
 
-# ==========================================
-# 1. 페이지 기본 설정 및 이탈 방지
-# ==========================================
+# 1. 페이지 이름 변경 반영
 st.set_page_config(page_title="NBEDL Exp Assistant", layout="wide")
 
-components.html(
-    """
-    <script>
-    window.onbeforeunload = function() {
-        return "데이터가 저장되지 않았을 수 있습니다. 정말 나가시겠습니까?";
-    };
-    </script>
-    """,
-    height=0,
-)
-
 # ==========================================
-# 2. 이미지 Base64 인코딩 & 글래스모피즘 CSS 주입
-# ==========================================
-def get_base64_of_bin_file(bin_file):
-    if os.path.exists(bin_file):
-        with open(bin_file, 'rb') as f:
-            data = f.read()
-        return base64.b64encode(data).decode()
-    return ""
-
-bg_base64 = get_base64_of_bin_file('liquid_bg.png')
-logo_base64 = get_base64_of_bin_file('logo.png')
-
-# 로고가 없을 경우를 대비한 HTML 문자열
-logo_html = f'<img src="data:image/png;base64,{logo_base64}" height="42" style="vertical-align: middle; margin-right: 12px; margin-bottom: 6px;">' if logo_base64 else ""
-
-custom_css = f"""
-<style>
-/* 폰트 및 전체 배경 (liquid_bg.png 적용) */
-@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
-
-.stApp {{
-    background: linear-gradient(135deg, rgba(255,255,255,0.40), rgba(247,239,232,0.28)), url("data:image/png;base64,{bg_base64}");
-    background-size: cover;
-    background-position: center;
-    background-attachment: fixed;
-    font-family: 'Pretendard', sans-serif !important;
-    color: #241d1a;
-}}
-
-/* 상단 기본 헤더 투명화 */
-header[data-testid="stHeader"] {{ background: transparent !important; }}
-
-/* 사이드바 글래스모피즘 */
-[data-testid="stSidebar"] {{
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.66), rgba(255, 255, 255, 0.46)) !important;
-    backdrop-filter: blur(22px) saturate(145%) !important;
-    -webkit-backdrop-filter: blur(22px) saturate(145%) !important;
-    border-right: 1px solid rgba(255, 255, 255, 0.56) !important;
-}}
-
-/* 폼, 탭 안쪽 패널, 아코디언 등 글래스 카드화 */
-[data-testid="stForm"], [data-testid="stExpander"] {{
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.86), rgba(252, 248, 244, 0.82)) !important;
-    backdrop-filter: blur(18px) !important;
-    -webkit-backdrop-filter: blur(18px) !important;
-    border: 1px solid rgba(255,255,255,0.58) !important;
-    box-shadow: 0 20px 60px rgba(17, 24, 39, 0.18) !important;
-    border-radius: 20px !important;
-    padding: 24px;
-}}
-
-/* 탭(Tabs) 글씨체 및 선택 시 오렌지 컬러 적용 */
-[data-testid="stTabs"] button {{
-    font-family: 'Pretendard', sans-serif !important;
-    font-weight: 700 !important;
-    font-size: 1.1rem !important;
-}}
-[data-testid="stTabs"] button[aria-selected="true"] {{
-    color: #ed542b !important;
-    border-bottom-color: #ed542b !important;
-}}
-
-/* 입력 폼 (Input, Select) 둥글고 예쁘게 */
-input, div[data-baseweb="select"] > div {{
-    background: rgba(255,255,255,0.62) !important;
-    backdrop-filter: blur(10px) !important;
-    border-radius: 12px !important;
-    border: 1px solid rgba(255,255,255,0.58) !important;
-}}
-input:focus, div[data-baseweb="select"] > div:focus-within {{
-    border-color: #ed542b !important;
-    box-shadow: 0 0 0 0.2rem rgba(237,84,43,0.16) !important;
-}}
-
-/* 버튼 스타일 (둥근 모서리, 오렌지 그라데이션) */
-.stButton > button {{
-    border-radius: 999px !important;
-    border: 1px solid rgba(255,255,255,0.55) !important;
-    background: rgba(255,255,255,0.34) !important;
-    font-weight: 700 !important;
-    transition: all 0.25s ease !important;
-    color: #241d1a !important;
-    backdrop-filter: blur(8px);
-}}
-.stButton > button[kind="primary"] {{
-    background: linear-gradient(135deg, #ed542b, #f68b21) !important;
-    border: none !important;
-    color: white !important;
-    box-shadow: 0 4px 12px rgba(237,84,43,0.3) !important;
-}}
-.stButton > button:hover {{
-    transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(17,24,39,0.12) !important;
-    border-color: #ed542b !important;
-    color: white !important;
-    background: #ed542b !important;
-}}
-</style>
-"""
-st.markdown(custom_css, unsafe_allow_html=True)
-
-# ==========================================
-# 3. 시스템 상태 초기화
+# 시스템 상태 초기화 (기본값들을 빈칸으로 변경하여 Placeholder 적용)
 # ==========================================
 if "app_mode" not in st.session_state:
     st.session_state.app_mode = "Setup"
@@ -145,7 +25,7 @@ if "df_data" not in st.session_state:
     st.session_state.df_data = pd.DataFrame()
 
 # ==========================================
-# 4. 전처리 및 엑셀 로드 함수
+# 전처리 및 엑셀 로드 함수
 # ==========================================
 def process_robust_data(df, feature_cols, target_col):
     grouped = df.groupby(feature_cols)
@@ -167,6 +47,8 @@ def process_robust_data(df, feature_cols, target_col):
 
 def load_excel_data(uploaded_file):
     xls = pd.ExcelFile(uploaded_file, engine='openpyxl')
+    
+    # 설정 복원
     df_meta = pd.read_excel(xls, 'Config_Meta')
     st.session_state.target_info = {
         "name": df_meta.iloc[0]['Target_Name'],
@@ -182,6 +64,7 @@ def load_excel_data(uploaded_file):
     else:
         st.session_state.passive_vars = []
         
+    # 변수 복원 및 Old_Name 보장
     df_vars = pd.read_excel(xls, 'Config_Vars')
     config_list = df_vars.to_dict('records')
     for var in config_list:
@@ -193,11 +76,11 @@ def load_excel_data(uploaded_file):
     st.session_state.app_mode = "Dashboard"
 
 # ==========================================
-# [화면 A] 실험 세팅 모드 (Setup)
+# [화면 A] 실험 세팅 모드 (Builder)
 # ==========================================
 if st.session_state.app_mode == "Setup":
-    # 로고 적용 타이틀
-    st.markdown(f"<h2>{logo_html}NBEDL AI 기반 공정 최적화 시스템</h2>", unsafe_allow_html=True)
+    # 요청하신 타이틀로 변경
+    st.title("⚙️ NBEDL AI 기반 공정 최적화 시스템")
     
     uploaded_file = st.file_uploader("📂 기존 실험 엑셀(xlsx) 파일 업로드", type=["xlsx"])
     if uploaded_file:
@@ -206,6 +89,7 @@ if st.session_state.app_mode == "Setup":
     
     st.divider()
     
+    # 텍스트 입력 칸 Placeholder(회색 글자) 적용
     st.session_state.exp_name = st.text_input("📝 실험 프로젝트 이름 (엑셀 파일명으로 사용됩니다)", value=st.session_state.exp_name, placeholder="예: NBEDL_Experiment_01")
     
     col_t1, col_t2, col_t3 = st.columns(3)
@@ -215,9 +99,10 @@ if st.session_state.app_mode == "Setup":
     passive_val = ",".join(st.session_state.passive_vars) if st.session_state.passive_vars else ""
     passive_input = col_t3.text_input("환경 변수 (쉼표 구분)", value=passive_val, placeholder="예: 온도 (°C), 습도 (%)")
     
-    colored_header(label="🔬 최적화 대상 공정 변수 입력", description="AI가 탐색할 공정 조건의 이름과 변수 범위를 지정하세요.", color_name="orange-70")
-    
+    # 요청하신 서브헤더 및 버튼 이름 적용
+    st.subheader("🔬 최적화 대상 공정 변수 입력")
     if st.button("➕ 공정 변수 추가"):
+        # Type 오류 수정 ("Real (실수)"로 명확히 지정)
         st.session_state.config_vars.append({
             "Old_Name": "", "Name": "", "Unit": "", "Type": "Real (실수)", 
             "Min": 0.0, "Max": 10.0, "Options": ""
@@ -229,6 +114,7 @@ if st.session_state.app_mode == "Setup":
         var["Name"] = c1.text_input(f"변수 {i+1} 이름", value=var.get("Name", ""), key=f"name_{i}", placeholder="예: 스핀코팅 속도1")
         var["Unit"] = c_u.text_input("단위", value=var.get("Unit", ""), key=f"unit_{i}", placeholder="예: rpm")
         
+        # 안전한 index 찾기 로직
         type_options = ["Real (실수)", "Integer (정수)", "Categorical (범주)"]
         safe_type = var.get("Type", "Real (실수)")
         if safe_type not in type_options: safe_type = "Real (실수)"
@@ -250,7 +136,7 @@ if st.session_state.app_mode == "Setup":
     st.divider()
     if st.button("🚀 실험 시작 및 대시보드 생성", type="primary"):
         if not target_name.strip():
-            st.error("목표 지표 이름을 입력해야 합니다.")
+            st.error("목표 지표 이름을 입력해야 합니다. (예: J_sc)")
         elif not st.session_state.config_vars:
             st.error("최소 1개 이상의 공정 변수를 추가해야 합니다.")
         else:
@@ -258,6 +144,7 @@ if st.session_state.app_mode == "Setup":
             p_vars = [v.strip() for v in passive_input.split(",") if v.strip()]
             st.session_state.passive_vars = p_vars
             
+            # [중요] 이름이 바뀐 변수 찾아서 과거 데이터 칼럼명 덮어쓰기
             if not st.session_state.df_data.empty:
                 rename_dict = {}
                 for var in st.session_state.config_vars:
@@ -265,6 +152,7 @@ if st.session_state.app_mode == "Setup":
                     new = var["Name"]
                     if old and old != new and old in st.session_state.df_data.columns:
                         rename_dict[old] = new
+                
                 if rename_dict:
                     st.session_state.df_data.rename(columns=rename_dict, inplace=True)
             
@@ -284,21 +172,19 @@ if st.session_state.app_mode == "Setup":
             st.rerun()
 
 # ==========================================
-# [화면 B] 실험 진행 모드 (대시보드 탭 레이아웃)
+# [화면 B] 실험 진행 모드 (대시보드)
 # ==========================================
 elif st.session_state.app_mode == "Dashboard":
     t_name = st.session_state.target_info["name"]
     t_dir = st.session_state.target_info["direction"]
     f_names = [v["Name"] for v in st.session_state.config_vars]
     
+    # 실험 이름이 비어있으면 기본값 적용
     display_exp_name = st.session_state.exp_name if st.session_state.exp_name.strip() else "NBEDL_Experiment"
+    st.title(f"🧪 NBEDL Exp Assistant : {display_exp_name}")
     
-    # 로고 적용 타이틀
-    st.markdown(f"<h2>{logo_html}NBEDL Exp Assistant : {display_exp_name}</h2>", unsafe_allow_html=True)
-    
-    # --- 사이드바 ---
     with st.sidebar:
-        st.header("📂 데이터 관리 패널")
+        st.header("📂 실험 데이터 관리")
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             st.session_state.df_data.to_excel(writer, sheet_name='Data', index=False)
@@ -313,141 +199,108 @@ elif st.session_state.app_mode == "Dashboard":
             
         file_name_export = f"{display_exp_name}_Data.xlsx"
         
-        st.download_button(label="📥 최신 데이터 Excel 다운로드", data=output.getvalue(), file_name=file_name_export, type="primary", use_container_width=True)
+        st.download_button(label="📥 현재 상태 Excel 다운로드", data=output.getvalue(), file_name=file_name_export, type="primary")
+        
         st.divider()
-        if st.button("🛠️ 환경 설정으로 돌아가기", use_container_width=True):
+        if st.button("🛠️ 설정 화면으로 돌아가기\n(현재 데이터 유지)"):
             st.session_state.app_mode = "Setup"
             st.rerun()
-        if st.button("⚠️ 모든 데이터 초기화", use_container_width=True):
+            
+        if st.button("⚠️ 모든 데이터 초기화"):
             st.session_state.clear()
             st.rerun()
 
-    # --- 메인 화면 탭(Tabs) ---
-    tab1, tab2, tab3 = st.tabs(["📝 신규 실험 입력", "🗂️ 데이터베이스 관리", "🤖 AI 최적화 대시보드"])
-
-    # ----------------------------------------
-    # [Tab 1] 신규 데이터 입력 공간
-    # ----------------------------------------
-    with tab1:
-        colored_header(label="새로운 스플릿 실험 결과 입력", description="값을 모두 적은 후 하단 '데이터 추가' 버튼을 클릭하세요.", color_name="orange-70")
+    st.subheader("📝 신규 데이터 입력")
+    with st.form("input_form"):
+        cols = st.columns(len(st.session_state.passive_vars) + len(st.session_state.config_vars) + 1)
+        new_row = {"학습_적용": True}
+        idx = 0
         
-        with st.form("input_form", clear_on_submit=True):
-            cols = st.columns(len(st.session_state.passive_vars) + len(st.session_state.config_vars) + 1)
-            new_row = {"학습_적용": True}
-            idx = 0
-            
-            label_style = "<div style='min-height: 35px; display: flex; align-items: flex-end; font-size: 14px; font-weight: 700; padding-bottom: 5px; color: #241d1a;'>{}</div>"
-            
-            for p_var in st.session_state.passive_vars:
-                with cols[idx]:
-                    st.markdown(label_style.format(p_var), unsafe_allow_html=True)
-                    new_row[p_var] = st.text_input(p_var, value="", label_visibility="collapsed", key=f"input_{p_var}")
-                idx += 1
-                
-            for var in st.session_state.config_vars:
-                unit_str = f" ({var['Unit']})" if var.get("Unit") else ""
-                disp_name = f"{var['Name']}{unit_str}"
-                with cols[idx]:
-                    st.markdown(label_style.format(disp_name), unsafe_allow_html=True)
-                    if "Real" in var["Type"]:
-                        new_row[var["Name"]] = st.number_input(disp_name, value=float(var["Min"]), step=0.1, label_visibility="collapsed", key=f"input_{var['Name']}")
-                    elif "Integer" in var["Type"]:
-                        new_row[var["Name"]] = st.number_input(disp_name, value=int(var["Min"]), step=1, label_visibility="collapsed", key=f"input_{var['Name']}")
-                    elif "Categorical" in var["Type"]:
-                        opts = [o.strip() for o in var["Options"].split(",")]
-                        new_row[var["Name"]] = st.selectbox(disp_name, opts, label_visibility="collapsed", key=f"input_{var['Name']}")
-                idx += 1
-                
+        label_style = "<div style='min-height: 40px; display: flex; align-items: flex-end; font-size: 14px; padding-bottom: 5px; color: #555;'>{}</div>"
+        
+        for p_var in st.session_state.passive_vars:
             with cols[idx]:
-                st.markdown(label_style.format(f"결과값 ({t_name})"), unsafe_allow_html=True)
-                new_row[t_name] = st.number_input(t_name, value=0.0, label_visibility="collapsed", key="input_target")
+                st.markdown(label_style.format(p_var), unsafe_allow_html=True)
+                new_row[p_var] = st.text_input(p_var, value="", label_visibility="collapsed")
+            idx += 1
             
-            st.write("") 
-            submitted = st.form_submit_button("➕ 데이터 추가", type="primary", use_container_width=True)
-            if submitted:
-                st.session_state.df_data = pd.concat([st.session_state.df_data, pd.DataFrame([new_row])], ignore_index=True)
-                st.success("데이터 저장 완료! 데이터베이스 관리 탭에서 확인하세요.")
-                st.rerun()
+        for var in st.session_state.config_vars:
+            unit_str = f" ({var['Unit']})" if var.get("Unit") else ""
+            disp_name = f"{var['Name']}{unit_str}"
+            
+            with cols[idx]:
+                st.markdown(label_style.format(disp_name), unsafe_allow_html=True)
+                if "Real" in var["Type"]:
+                    new_row[var["Name"]] = st.number_input(disp_name, value=float(var["Min"]), step=0.1, label_visibility="collapsed")
+                elif "Integer" in var["Type"]:
+                    new_row[var["Name"]] = st.number_input(disp_name, value=int(var["Min"]), step=1, label_visibility="collapsed")
+                elif "Categorical" in var["Type"]:
+                    opts = [o.strip() for o in var["Options"].split(",")]
+                    new_row[var["Name"]] = st.selectbox(disp_name, opts, label_visibility="collapsed")
+            idx += 1
+            
+        with cols[idx]:
+            st.markdown(label_style.format(f"결과값 ({t_name})"), unsafe_allow_html=True)
+            new_row[t_name] = st.number_input(t_name, value=0.0, label_visibility="collapsed")
+        
+        if st.form_submit_button("데이터 추가"):
+            st.session_state.df_data = pd.concat([st.session_state.df_data, pd.DataFrame([new_row])], ignore_index=True)
+            st.success("데이터가 저장되었습니다.")
+            st.rerun()
 
-        if st.button("↩️ 마지막 입력 취소 (직전 데이터 삭제)"):
-            if not st.session_state.df_data.empty:
-                st.session_state.df_data = st.session_state.df_data.iloc[:-1] 
-                st.success("가장 최근 데이터가 삭제되었습니다.")
-                st.rerun()
+    if st.button("↩️ 마지막 입력 취소 (가장 최근 데이터 삭제)"):
+        if not st.session_state.df_data.empty:
+            st.session_state.df_data = st.session_state.df_data.iloc[:-1] 
+            st.success("가장 최근 데이터가 삭제되었습니다.")
+            st.rerun()
+        else:
+            st.warning("삭제할 데이터가 없습니다.")
+
+    st.divider()
+    st.subheader("🗂️ 원본 데이터 수정 및 필터링")
+    st.caption("표 안의 셀을 더블클릭해 직접 수정하거나, 표 좌측 빈칸을 눌러 전체 행(Row)을 선택한 후 키보드 Delete 키로 삭제할 수 있습니다.")
+    
+    st.session_state.df_data = st.data_editor(
+        st.session_state.df_data, 
+        use_container_width=True, 
+        hide_index=False, 
+        num_rows="dynamic", 
+        column_config={"학습_적용": st.column_config.CheckboxColumn("학습 적용")}
+    )
+
+    st.divider()
+    c1, c2 = st.columns(2)
+    valid_df = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
+
+    with c1:
+        st.markdown(f"**📈 최적화 진행도 ({t_dir})**")
+        if len(valid_df) > 0:
+            chart_data = valid_df[t_name].expanding().max() if "Maximize" in t_dir else valid_df[t_name].expanding().min()
+            st.line_chart(chart_data, height=250)
+        else:
+            st.info("데이터가 부족합니다.")
+
+    with c2:
+        st.markdown("**🤖 AI 다음 조건 추천**")
+        if st.button("계산 실행", type="primary"):
+            if len(valid_df) < 2:
+                st.warning("최소 2개 이상의 유효 데이터가 필요합니다.")
             else:
-                st.warning("삭제할 데이터가 없습니다.")
-
-    # ----------------------------------------
-    # [Tab 2] 데이터베이스 관리 (에디터)
-    # ----------------------------------------
-    with tab2:
-        colored_header(label="전체 실험 데이터 아카이브", description="입력 이력을 한눈에 검토하고 이상치 데이터의 AI 반영 여부를 수정할 수 있습니다.", color_name="orange-70")
-        st.session_state.df_data = st.data_editor(
-            st.session_state.df_data, 
-            use_container_width=True, 
-            hide_index=True, 
-            column_config={"학습_적용": st.column_config.CheckboxColumn("학습 적용")}
-        )
-
-    # ----------------------------------------
-    # [Tab 3] AI 최적화 대시보드
-    # ----------------------------------------
-    with tab3:
-        valid_df = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
-        c1, c2 = st.columns([1.2, 1])
-
-        with c1:
-            colored_header(label=f"📈 최적화 경향 곡선 ({t_dir})", description="실험 횟수가 누적됨에 따라 타겟 지표의 최고/최저 성과 수렴 상태를 보여줍니다.", color_name="green-70")
-            if len(valid_df) > 0:
-                chart_data = valid_df[t_name].expanding().max() if "Maximize" in t_dir else valid_df[t_name].expanding().min()
-                st.line_chart(chart_data, height=350)
-            else:
-                st.info("분석용 데이터가 입력되지 않았습니다.")
-
-        with c2:
-            colored_header(label="🤖 베이지안 추천 차기 조건", description="가우시안 프로세스 알고리즘에 기반하여 제안된 3가지 최적 조건 셋입니다.", color_name="orange-70")
-            if st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
-                if len(valid_df) < 2:
-                    st.warning("정밀 분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
-                else:
-                    with st.spinner("알고리즘 연산 중..."):
-                        X_train, y_train = process_robust_data(valid_df, f_names, t_name)
-                        ai_spaces = []
-                        for var in st.session_state.config_vars:
-                            if "Real" in var["Type"]: ai_spaces.append(Real(var["Min"], var["Max"], name=var["Name"]))
-                            elif "Integer" in var["Type"]: ai_spaces.append(Integer(var["Min"], var["Max"], name=var["Name"]))
-                            elif "Categorical" in var["Type"]: ai_spaces.append(Categorical([o.strip() for o in var["Options"].split(",")], name=var["Name"]))
-                        
-                        y_train_fit = [-val for val in y_train] if "Maximize" in t_dir else y_train
-                            
-                        opt = Optimizer(dimensions=ai_spaces, base_estimator="GP", acq_func="EI", random_state=None)
-                        
-                        X_train_safe = []
-                        y_train_fit_safe = []
-                        for i, point in enumerate(X_train):
-                            if all(ai_spaces[j].low <= val <= ai_spaces[j].high for j, val in enumerate(point)):
-                                X_train_safe.append(point)
-                                y_train_fit_safe.append(y_train_fit[i])
-                        
-                        opt.tell(X_train_safe, y_train_fit_safe)
-                        next_points = opt.ask(n_points=3)
+                with st.spinner("AI 최적화 가동 중..."):
+                    X_train, y_train = process_robust_data(valid_df, f_names, t_name)
+                    ai_spaces = []
+                    for var in st.session_state.config_vars:
+                        if "Real" in var["Type"]: ai_spaces.append(Real(var["Min"], var["Max"], name=var["Name"]))
+                        elif "Integer" in var["Type"]: ai_spaces.append(Integer(var["Min"], var["Max"], name=var["Name"]))
+                        elif "Categorical" in var["Type"]: ai_spaces.append(Categorical([o.strip() for o in var["Options"].split(",")], name=var["Name"]))
                     
-                    if "prev_next_points" in st.session_state and st.session_state.prev_next_points == next_points:
-                        st.info("💡 **AI 수렴 상태 판단:** 현재 입력된 데이터 풀 안에서 해당 지점이 가장 최적의 공정 조건 범위로 강력하게 매핑되었습니다.")
-                    
-                    st.session_state.prev_next_points = next_points
+                    y_train_fit = [-val for val in y_train] if "Maximize" in t_dir else y_train
                         
-                    for i, points in enumerate(next_points):
-                        with st.container():
-                            st.markdown(f"**실험 후보 {i+1}**")
-                            cols_rec = st.columns(len(f_names))
-                            for idx, (var, val) in enumerate(zip(st.session_state.config_vars, points)):
-                                unit_str = f" {var['Unit']}" if var.get("Unit") else ""
-                                cols_rec[idx].metric(label=var["Name"], value=f"{round(val, 3)}{unit_str}")
-                            # 글래스모피즘 톤에 맞춘 반투명 카드 메트릭 적용
-                            style_metric_cards(background_color="rgba(255,255,255,0.4)", border_left_color="#ed542b", border_color="rgba(255,255,255,0.6)", box_shadow=False)
+                    opt = Optimizer(dimensions=ai_spaces, base_estimator="GP", acq_func="EI", random_state=42)
+                    opt.tell(X_train, y_train_fit)
+                    next_x = opt.ask()
                     
-                    with st.expander("🔍 AI 연산 피팅 로그 데이터"):
-                        debug_df = pd.DataFrame(X_train, columns=f_names)
-                        debug_df[t_name] = y_train
-                        st.dataframe(debug_df, use_container_width=True)
+                st.success("✅ 다음 최적 스플릿 조건")
+                for var, val in zip(st.session_state.config_vars, next_x):
+                    unit_str = f" {var['Unit']}" if var.get("Unit") else ""
+                    st.metric(label=var["Name"], value=f"{val}{unit_str}")
