@@ -1,5 +1,6 @@
 streamlit
 pandas
 numpy
-scikit-optimize
 openpyxl
+scikit-optimize
+streamlit-extras

@@ -6,6 +6,10 @@ from skopt import Optimizer
 from skopt.space import Real, Integer, Categorical
 import streamlit.components.v1 as components
 
+# streamlit-extras 패키지 라이브러리 도입
+from streamlit_extras.colored_header import colored_header
+from streamlit_extras.metric_cards import style_metric_cards
+
 # ==========================================
 # 1. 페이지 기본 설정 및 이탈 방지
 # ==========================================
@@ -108,7 +112,9 @@ if st.session_state.app_mode == "Setup":
     passive_val = ",".join(st.session_state.passive_vars) if st.session_state.passive_vars else ""
     passive_input = col_t3.text_input("환경 변수 (쉼표 구분)", value=passive_val, placeholder="예: 온도 (°C), 습도 (%)")
     
-    st.subheader("🔬 최적화 대상 공정 변수 입력")
+    # extras 디자인 헤더 적용
+    colored_header(label="🔬 최적화 대상 공정 변수 입력", description="AI가 탐색할 공정 조건의 이름과 변수 범위를 지정하세요.", color_name="blue-70")
+    
     if st.button("➕ 공정 변수 추가"):
         st.session_state.config_vars.append({
             "Old_Name": "", "Name": "", "Unit": "", "Type": "Real (실수)", 
@@ -184,7 +190,7 @@ elif st.session_state.app_mode == "Dashboard":
     f_names = [v["Name"] for v in st.session_state.config_vars]
     
     display_exp_name = st.session_state.exp_name if st.session_state.exp_name.strip() else "NBEDL_Experiment"
-    st.title(f"🧪 NBEDL Exp Assistant : {display_exp_name}")
+    st.title(f"🧪 NBEDL Exp Assistant")
     
     # --- 사이드바 (설정 및 다운로드 유지) ---
     with st.sidebar:
@@ -212,14 +218,14 @@ elif st.session_state.app_mode == "Dashboard":
             st.session_state.clear()
             st.rerun()
 
-    # --- 💡 메인 화면 탭(Tabs) 생성 ---
-    tab1, tab2, tab3 = st.tabs(["📝 신규 실험 입력", "🗂️ 데이터베이스 관리", "🤖 AI 최적화 대시보드"])
+    # --- 메인 화면 탭(Tabs) 생성 ---
+    tab1, tab2, tab3 = st.tabs(["📝 신규 실험 입력", "🗂️ 데이터베이스 관리", "🤖 AI 최적화 대시보+"])
 
     # ----------------------------------------
     # [Tab 1] 신규 데이터 입력 공간
     # ----------------------------------------
     with tab1:
-        st.subheader("새로운 스플릿 실험 결과를 입력하세요")
+        colored_header(label="새로운 스플릿 실험 결과 입력", description="엔터를 쳐도 추가되지 않습니다. 값을 모두 적은 후 하단 '데이터 추가' 버튼을 클릭하세요.", color_name="blue-60")
         
         cols = st.columns(len(st.session_state.passive_vars) + len(st.session_state.config_vars) + 1)
         new_row = {"학습_적용": True}
@@ -257,7 +263,7 @@ elif st.session_state.app_mode == "Dashboard":
         with col_btn1:
             if st.button("➕ 데이터 추가", type="primary", use_container_width=True):
                 st.session_state.df_data = pd.concat([st.session_state.df_data, pd.DataFrame([new_row])], ignore_index=True)
-                st.success("데이터가 저장되었습니다. '데이터베이스 관리' 탭에서 확인하세요.")
+                st.success("데이터 저장 완료!")
         with col_btn2:
             if st.button("↩️ 마지막 입력 취소 (직전 데이터 삭제)"):
                 if not st.session_state.df_data.empty:
@@ -271,8 +277,7 @@ elif st.session_state.app_mode == "Dashboard":
     # [Tab 2] 데이터베이스 관리 (에디터)
     # ----------------------------------------
     with tab2:
-        st.subheader("전체 실험 데이터 기록")
-        st.caption("셀을 더블클릭해 직접 수정할 수 있습니다. 에러 데이터는 삭제하는 대신 좌측 '학습 적용' 체크를 해제하세요.")
+        colored_header(label="전체 실험 데이터 아카이브", description="입력 이력을 한눈에 검토하고 이상치 데이터의 AI 반영 여부를 수정할 수 있습니다.", color_name="blue-60")
         st.session_state.df_data = st.data_editor(
             st.session_state.df_data, 
             use_container_width=True, 
@@ -288,20 +293,20 @@ elif st.session_state.app_mode == "Dashboard":
         c1, c2 = st.columns([1.2, 1])
 
         with c1:
-            st.markdown(f"### 📈 최적화 수렴도 ({t_dir})")
+            colored_header(label=f"📈 최적화 경향 곡선 ({t_dir})", description="실험 횟수가 누적됨에 따라 타겟 지표의 최고/최저 성과 수렴 상태를 보여줍니다.", color_name="green-60")
             if len(valid_df) > 0:
                 chart_data = valid_df[t_name].expanding().max() if "Maximize" in t_dir else valid_df[t_name].expanding().min()
                 st.line_chart(chart_data, height=350)
             else:
-                st.info("실험 데이터가 부족하여 그래프를 렌더링할 수 없습니다.")
+                st.info("분석용 데이터가 입력되지 않았습니다.")
 
         with c2:
-            st.markdown("### 🤖 다음 최적화 스플릿 추천")
+            colored_header(label="🤖 베이지안 추천 차기 조건", description="가우시안 프로세스 알고리즘에 기반하여 제안된 3가지 최적 조건 셋입니다.", color_name="orange-60")
             if st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
                 if len(valid_df) < 2:
-                    st.warning("분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
+                    st.warning("정밀 분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
                 else:
-                    with st.spinner("가우시안 프로세스 및 베이지안 최적화 가동 중..."):
+                    with st.spinner("알고리즘 연산 중..."):
                         X_train, y_train = process_robust_data(valid_df, f_names, t_name)
                         ai_spaces = []
                         for var in st.session_state.config_vars:
@@ -324,19 +329,21 @@ elif st.session_state.app_mode == "Dashboard":
                         next_points = opt.ask(n_points=3)
                     
                     if "prev_next_points" in st.session_state and st.session_state.prev_next_points == next_points:
-                        st.info("💡 **AI 판단:** 현재 데이터 분포상 이 지점이 최적일 확률이 가장 높습니다.")
+                        st.info("💡 **AI 수렴 상태 판단:** 현재 입력된 데이터 풀 안에서 해당 지점이 가장 최적의 공정 조건 범위로 강력하게 매핑되었습니다.")
                     
                     st.session_state.prev_next_points = next_points
                         
                     for i, points in enumerate(next_points):
                         with st.container(border=True):
-                            st.markdown(f"**후보 {i+1}**")
+                            st.markdown(f"**실험 후보 {i+1}**")
                             cols_rec = st.columns(len(f_names))
                             for idx, (var, val) in enumerate(zip(st.session_state.config_vars, points)):
                                 unit_str = f" {var['Unit']}" if var.get("Unit") else ""
                                 cols_rec[idx].metric(label=var["Name"], value=f"{round(val, 3)}{unit_str}")
+                            # metric_cards 디자인 적용
+                            style_metric_cards(background_color="#FFFFFF", border_left_color="#0066CC", border_color="#E6E6E6", box_shadow=False)
                     
-                    with st.expander("🔍 AI 학습 데이터 그룹화 내역 확인"):
+                    with st.expander("🔍 AI 연산 피팅 로그 데이터"):
                         debug_df = pd.DataFrame(X_train, columns=f_names)
                         debug_df[t_name] = y_train
                         st.dataframe(debug_df, use_container_width=True)
