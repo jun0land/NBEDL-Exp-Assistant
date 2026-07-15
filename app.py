@@ -10,6 +10,9 @@ import streamlit.components.v1 as components
 from streamlit_extras.colored_header import colored_header
 from streamlit_extras.metric_cards import style_metric_cards
 
+# ==========================================
+# 1. 페이지 기본 설정 및 이탈 방지
+# ==========================================
 st.set_page_config(page_title="NBEDL Exp Assistant", layout="wide")
 
 components.html(
@@ -26,7 +29,9 @@ components.html(
     """, height=0,
 )
 
-# 이미지 인코딩
+# ==========================================
+# 2. 이미지 Base64 인코딩
+# ==========================================
 def get_base64_of_bin_file(bin_file):
     if os.path.exists(bin_file):
         with open(bin_file, 'rb') as f: return base64.b64encode(f.read()).decode()
@@ -34,88 +39,165 @@ def get_base64_of_bin_file(bin_file):
 
 bg_base64 = get_base64_of_bin_file('liquid_bg.png')
 logo_base64 = get_base64_of_bin_file('logo.png')
-logo_html = f'<img src="data:image/png;base64,{logo_base64}" height="42" style="vertical-align: middle; margin-right: 12px;">' if logo_base64 else ""
+
+# [해결] 로고 이미지를 따로 빼지 않고 <h2> 태그 안에 직접 넣기 위해 변수로만 보관
+logo_html = f'<img src="data:image/png;base64,{logo_base64}" height="42" style="margin-right: 12px;">' if logo_base64 else ""
 
 # =========================================================================
-# ✅ 수정된 CSS (아이콘 보호, 블러 강화, 투명도 극대화)
+# 3. 완벽 분석 적용 CSS
 # =========================================================================
 custom_css = f"""
 <style>
-/* 폰트 적용을 텍스트 요소로 한정하여 아이콘 폰트 보호 */
-html, body, p, h1, h2, h3, h4, h5, h6, label {{ font-family: 'Pretendard', sans-serif !important; }}
+/* 폰트 적용 (아이콘 폰트 절대 보호) */
+html, body, p, h1, h2, h3, h4, h5, h6, label, span, div {{ font-family: 'Pretendard', sans-serif; }}
+.material-symbols-rounded, .material-icons, [class*="icon"], [data-baseweb="icon"] {{ font-family: 'Material Symbols Rounded', 'Material Icons', sans-serif !important; }}
 
+/* 최상위 배경 이미지 */
 .stApp {{
     background: linear-gradient(135deg, rgba(255,255,255,0.45), rgba(255,255,255,0.25)), url("data:image/png;base64,{bg_base64}");
     background-size: cover;
+    background-position: center;
     background-attachment: fixed;
     color: #1a1a1a;
 }}
 
-/* 전체 텍스트 그림자 삭제 */
+/* 네온(Shadow) 효과 완벽 삭제 */
 * {{ text-shadow: none !important; }}
 
-/* 유리 블럭 레이어 */
-[data-testid="stForm"], [data-testid="stExpander"], [data-testid="stVerticalBlockBorderWrapper"], .title-glass-container {{
-    background: rgba(255, 255, 255, 0.15) !important;
-    backdrop-filter: blur(48px) saturate(150%) !important;
-    border: 1px solid rgba(255, 255, 255, 0.3) !important;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.05) !important;
-    border-radius: 20px !important;
-    padding: 24px;
+/* 불투명 방해막 모조리 투명하게 제거 */
+[data-testid="stAppViewContainer"], [data-testid="stMain"], [data-testid="stHeader"] {{
+    background: transparent !important;
 }}
 
-/* 타이틀 박스 */
+/* ========================================================================= */
+/* ✅ 진정한 Liquid Glass 블럭 (사용자님 피드백 블러값 그대로 유지!) */
+/* ========================================================================= */
+[data-testid="stForm"], 
+[data-testid="stExpander"], 
+div[data-testid="stVerticalBlockBorderWrapper"], 
 .title-glass-container {{
-    padding: 16px 24px;
-    margin-bottom: 24px;
-    border-left: 6px solid #ed542b !important;
+    background: rgba(255, 255, 255, 0.15) !important; 
+    backdrop-filter: blur(48px) saturate(150%) !important; 
+    -webkit-backdrop-filter: blur(48px) saturate(150%) !important;
+    border: none !important; 
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.05) !important; 
+    border-radius: 20px !important; 
+    padding: 24px !important;
+    margin-bottom: 16px !important;
 }}
 
-/* 탭 디자인: 배경/테두리 완전 삭제 */
-[data-testid="stTabs"] [data-baseweb="tab-list"] {{
+/* 🔥 [핵심 해결] 컨테이너 내부의 보이지 않는 불투명 회색 뼈대(div)들을 강제로 투명하게 날려버림 🔥 */
+div[data-testid="stVerticalBlockBorderWrapper"] > div,
+div[data-testid="stVerticalBlockBorderWrapper"] > div > div {{
     background: transparent !important;
-    border: none !important;
-    gap: 20px !important;
-}}
-[data-testid="stTabs"] [data-baseweb="tab"] {{
-    background: transparent !important;
-    border: none !important;
-    color: #7a716c !important;
-    font-weight: 800 !important;
-    padding: 10px 4px !important;
-}}
-[data-testid="stTabs"] [aria-selected="true"] {{
-    background: transparent !important;
-    color: #ed542b !important;
-    border-bottom: 3px solid #ed542b !important;
-}}
-
-/* 입력칸 */
-div[data-baseweb="input"], div[data-baseweb="select"] > div {{
-    background: rgba(255, 255, 255, 0.5) !important;
-    backdrop-filter: blur(12px) !important;
-    border: 1px solid rgba(255,255,255,0.8) !important;
-    border-radius: 10px !important;
-}}
-
-/* 그래프 */
-[data-testid="stVegaLiteChart"] {{
-    background: transparent !important;
+    background-color: transparent !important;
     border: none !important;
     box-shadow: none !important;
 }}
 
+/* 사이드바는 유리 겹침 방지 */
+[data-testid="stSidebar"] div[data-testid="stVerticalBlockBorderWrapper"] {{
+    background: transparent !important; backdrop-filter: none !important; box-shadow: none !important; padding: 0 !important;
+}}
+
+/* 타이틀 박스 특별 설정 (포인트 라인 유지) */
+.title-glass-container {{
+    padding: 16px 24px !important;
+    margin-bottom: 24px !important;
+    margin-top: -10px !important;
+    border-left: 6px solid #ed542b !important; 
+}}
+
+/* ========================================================================= */
+/* ✅ 탭(Tabs) 내부의 모든 하위 요소 배경까지 100% 투명하게 강제 날리기 */
+/* ========================================================================= */
+[data-testid="stTabs"] [data-baseweb="tab-list"],
+[data-testid="stTabs"] [data-baseweb="tab-list"] * {{
+    background-color: transparent !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}}
+[data-testid="stTabs"] [data-baseweb="tab"] {{
+    color: #7a716c !important;
+    font-weight: 800 !important;
+    padding: 10px 8px !important; 
+}}
+[data-testid="stTabs"] [aria-selected="true"],
+[data-testid="stTabs"] [aria-selected="true"] * {{
+    color: #ed542b !important;
+    background-color: transparent !important;
+    background: transparent !important;
+}}
+[data-testid="stTabs"] [aria-selected="true"] {{
+    border-bottom: 3px solid #ed542b !important; 
+    border-radius: 0 !important;
+}}
+
+/* --------------------------------------------------- */
+/* 파일 업로더 회색 바탕 없애고 깔끔하게 투명화 */
+/* --------------------------------------------------- */
+[data-testid="stFileUploader"] {{
+    background: transparent !important;
+    border: 1px dashed rgba(255, 255, 255, 0.6) !important;
+    border-radius: 16px !important;
+    padding: 16px !important;
+}}
+[data-testid="stFileUploader"] section {{ background: transparent !important; }}
+
+/* 폼 내부에 변수별로 묶인 소그룹 */
+[data-testid="stForm"] [data-testid="column"] {{
+    background: rgba(255, 255, 255, 0.2) !important;
+    backdrop-filter: blur(24px) saturate(150%) !important;
+    border: none !important;
+    border-radius: 16px !important;
+    padding: 16px !important;
+    margin-bottom: 12px !important;
+}}
+
+/* 입력칸(Input) - 하얀색 투명 캡슐 형태 유지 */
+div[data-baseweb="input"], div[data-baseweb="select"] > div {{
+    background: rgba(255, 255, 255, 0.5) !important; 
+    backdrop-filter: blur(12px) !important;
+    border-radius: 10px !important; 
+    border: 1px solid rgba(255, 255, 255, 0.6) !important; 
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.02) !important; 
+}}
+div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-within {{
+    background: rgba(255,255,255,0.8) !important;
+    border-color: #ed542b !important;
+}}
+
+/* 버튼 공통 투명화 */
 .stButton > button {{
-    border-radius: 10px !important;
-    background: rgba(255,255,255,0.4) !important;
-    border: 1px solid rgba(255,255,255,0.6) !important;
+    border-radius: 12px !important; 
+    border: none !important;
+    background: rgba(255,255,255,0.5) !important;
+    backdrop-filter: blur(20px) !important;
+    font-weight: 700 !important;
+    color: #1a1a1a !important;
+}}
+.stButton > button[kind="primary"] {{
+    background: linear-gradient(135deg, #ed542b, #f68b21) !important;
+    color: white !important;
+}}
+
+/* 차트 배경 완전 투명화 및 캔버스 자체 곡률 추가 (잘림 방지) */
+[data-testid="stVegaLiteChart"] {{
+    background: transparent !important; 
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+}}
+[data-testid="stVegaLiteChart"] canvas {{
+    border-radius: 12px !important;
 }}
 </style>
 """
 st.markdown(custom_css, unsafe_allow_html=True)
 
 # ==========================================
-# 3. 시스템 상태 초기화
+# 4. 시스템 상태 초기화
 # ==========================================
 if "app_mode" not in st.session_state:
     st.session_state.app_mode = "Setup"
@@ -131,7 +213,7 @@ if "df_data" not in st.session_state:
     st.session_state.df_data = pd.DataFrame()
 
 # ==========================================
-# 4. 전처리 및 엑셀 로드 함수
+# 5. 전처리 및 엑셀 로드 함수
 # ==========================================
 def process_robust_data(df, feature_cols, target_col):
     grouped = df.groupby(feature_cols)
@@ -182,10 +264,12 @@ def load_excel_data(uploaded_file):
 # [화면 A] 실험 세팅 모드 (Setup)
 # ==========================================
 if st.session_state.app_mode == "Setup":
+    # [핵심 해결] <h2> 태그 안에 로고와 글씨를 함께 넣고 display: flex 적용 (줄바꿈 원천 차단)
     st.markdown(f"""
     <div class="title-glass-container">
-        {logo_html}
-        <h2>NBEDL AI 기반 공정 최적화 시스템</h2>
+        <h2 style="margin: 0; padding: 0; display: flex; align-items: center;">
+            {logo_html} NBEDL AI 기반 공정 최적화 시스템
+        </h2>
     </div>
     """, unsafe_allow_html=True)
     
@@ -287,10 +371,12 @@ elif st.session_state.app_mode == "Dashboard":
     
     display_exp_name = st.session_state.exp_name if st.session_state.exp_name.strip() else "NBEDL_Experiment"
     
+    # [해결] 동일하게 한 줄 출력
     st.markdown(f"""
     <div class="title-glass-container">
-        {logo_html}
-        <h2>NBEDL Exp Assistant : {display_exp_name}</h2>
+        <h2 style="margin: 0; padding: 0; display: flex; align-items: center;">
+            {logo_html} NBEDL Exp Assistant : {display_exp_name}
+        </h2>
     </div>
     """, unsafe_allow_html=True)
     
