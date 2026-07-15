@@ -262,6 +262,52 @@ MANUAL_MD = """
 - 같은 조건을 여러 번 반복 측정하면, AI가 **이상치를 자동으로 걸러** 평균을 사용합니다.
 """
 
+# 메뉴얼 버튼: 좌측 타이틀 배너(.title-glass-container)와 통일감 있는 유리 질감 + 오렌지 액센트
+manual_btn_css = """
+<style>
+/* 컬럼 안에서 버튼을 우측·수직 중앙으로 정렬 */
+div[class*="st-key-manual_"] {
+    display: flex !important;
+    justify-content: flex-end !important;
+    align-items: center !important;
+    height: 100% !important;
+}
+/* 버튼 자체를 배너와 같은 유리 질감으로 */
+div[class*="st-key-manual_"] button {
+    width: auto !important;
+    min-height: 0 !important;
+    padding: 12px 22px !important;
+    background: rgba(255, 255, 255, 0.15) !important;
+    backdrop-filter: blur(48px) saturate(150%) !important;
+    -webkit-backdrop-filter: blur(48px) saturate(150%) !important;
+    border: none !important;
+    border-left: 6px solid #ed542b !important;   /* 배너와 동일한 오렌지 액센트 */
+    border-radius: 16px !important;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.05) !important;
+    color: #1a1a1a !important;
+    font-weight: 800 !important;
+    white-space: nowrap !important;
+}
+/* 라벨(아이콘+글자)을 버튼 정중앙에 배치 */
+div[class*="st-key-manual_"] button > div,
+div[class*="st-key-manual_"] button p {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin: 0 !important;
+    width: 100% !important;
+}
+div[class*="st-key-manual_"] button:hover {
+    transform: translateY(-2px) !important;
+    background: #ed542b !important;
+    border-left-color: #ed542b !important;
+    color: white !important;
+    box-shadow: 0 8px 20px rgba(237, 84, 43, 0.25) !important;
+}
+</style>
+"""
+st.markdown(manual_btn_css, unsafe_allow_html=True)
+
 @st.dialog("📖 NBEDL Exp Assistant 사용 설명서", width="large")
 def show_manual():
     st.markdown(MANUAL_MD)
@@ -271,7 +317,7 @@ def render_title_bar(title_html, key):
     with col_title:
         st.markdown(title_html, unsafe_allow_html=True)
     with col_btn:
-        if st.button("📖 메뉴얼", use_container_width=True, key=key):
+        if st.button("📖 메뉴얼", use_container_width=False, key=key):
             show_manual()
 
 # ==========================================
