@@ -40,8 +40,8 @@ def get_base64_of_bin_file(bin_file):
 bg_base64 = get_base64_of_bin_file('liquid_bg.png')
 logo_base64 = get_base64_of_bin_file('logo.png')
 
-# [해결] 로고 이미지를 따로 빼지 않고 <h2> 태그 안에 직접 넣기 위해 변수로만 보관
-logo_html = f'<img src="data:image/png;base64,{logo_base64}" height="42" style="margin-right: 12px;">' if logo_base64 else ""
+# [해결 1] 로고 정렬: 엔터 없이 한 줄로 묶기 위한 HTML 변수 생성
+logo_html = f'<img src="data:image/png;base64,{logo_base64}" height="42" style="vertical-align: middle; margin-right: 12px;">' if logo_base64 else ""
 
 # =========================================================================
 # 3. 완벽 분석 적용 CSS
@@ -70,11 +70,11 @@ html, body, p, h1, h2, h3, h4, h5, h6, label, span, div {{ font-family: 'Pretend
 }}
 
 /* ========================================================================= */
-/* ✅ 진정한 Liquid Glass 블럭 (사용자님 피드백 블러값 그대로 유지!) */
+/* ✅ 진정한 Liquid Glass 블럭 (사용자님 피드백 블러값 그대로 유지) */
 /* ========================================================================= */
 [data-testid="stForm"], 
 [data-testid="stExpander"], 
-div[data-testid="stVerticalBlockBorderWrapper"], 
+[data-testid="stVerticalBlockBorderWrapper"], 
 .title-glass-container {{
     background: rgba(255, 255, 255, 0.15) !important; 
     backdrop-filter: blur(48px) saturate(150%) !important; 
@@ -86,17 +86,13 @@ div[data-testid="stVerticalBlockBorderWrapper"],
     margin-bottom: 16px !important;
 }}
 
-/* 🔥 [핵심 해결] 컨테이너 내부의 보이지 않는 불투명 회색 뼈대(div)들을 강제로 투명하게 날려버림 🔥 */
-div[data-testid="stVerticalBlockBorderWrapper"] > div,
-div[data-testid="stVerticalBlockBorderWrapper"] > div > div {{
+/* [해결 2] 컨테이너 내부의 보이지 않는 흰색 블럭 강제 투명화 */
+[data-testid="stVerticalBlockBorderWrapper"] > div {{
     background: transparent !important;
-    background-color: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
 }}
 
 /* 사이드바는 유리 겹침 방지 */
-[data-testid="stSidebar"] div[data-testid="stVerticalBlockBorderWrapper"] {{
+[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {{
     background: transparent !important; backdrop-filter: none !important; box-shadow: none !important; padding: 0 !important;
 }}
 
@@ -109,41 +105,38 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div > div {{
 }}
 
 /* ========================================================================= */
-/* ✅ 탭(Tabs) 내부의 모든 하위 요소 배경까지 100% 투명하게 강제 날리기 */
+/* ✅ [해결 3] 탭(Tabs) 내부의 모든 하위 요소 배경까지 투명하게 강제 날리기 */
 /* ========================================================================= */
 [data-testid="stTabs"] [data-baseweb="tab-list"],
 [data-testid="stTabs"] [data-baseweb="tab-list"] * {{
     background-color: transparent !important;
     background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
 }}
 [data-testid="stTabs"] [data-baseweb="tab"] {{
+    border: none !important;
     color: #7a716c !important;
     font-weight: 800 !important;
     padding: 10px 8px !important; 
-}}
-[data-testid="stTabs"] [aria-selected="true"],
-[data-testid="stTabs"] [aria-selected="true"] * {{
-    color: #ed542b !important;
-    background-color: transparent !important;
-    background: transparent !important;
+    box-shadow: none !important;
 }}
 [data-testid="stTabs"] [aria-selected="true"] {{
+    color: #ed542b !important;
     border-bottom: 3px solid #ed542b !important; 
     border-radius: 0 !important;
 }}
 
 /* --------------------------------------------------- */
-/* 파일 업로더 회색 바탕 없애고 깔끔하게 투명화 */
+/* ✅ [해결 2] 파일 업로더 회색 바탕 없애고 유리 질감 뚫어주기 */
 /* --------------------------------------------------- */
 [data-testid="stFileUploader"] {{
-    background: transparent !important;
-    border: 1px dashed rgba(255, 255, 255, 0.6) !important;
+    background: rgba(255, 255, 255, 0.1) !important;
+    backdrop-filter: blur(24px) !important;
+    border: 1px dashed rgba(237, 84, 43, 0.4) !important;
     border-radius: 16px !important;
     padding: 16px !important;
 }}
 [data-testid="stFileUploader"] section {{ background: transparent !important; }}
+[data-testid="stFileUploader"] button {{ background: rgba(255,255,255,0.4) !important; border: 1px solid rgba(255,255,255,0.6) !important; box-shadow: none !important; }}
 
 /* 폼 내부에 변수별로 묶인 소그룹 */
 [data-testid="stForm"] [data-testid="column"] {{
@@ -155,7 +148,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] > div > div {{
     margin-bottom: 12px !important;
 }}
 
-/* 입력칸(Input) - 하얀색 투명 캡슐 형태 유지 */
+/* 입력칸(Input) */
 div[data-baseweb="input"], div[data-baseweb="select"] > div {{
     background: rgba(255, 255, 255, 0.5) !important; 
     backdrop-filter: blur(12px) !important;
@@ -182,7 +175,7 @@ div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-w
     color: white !important;
 }}
 
-/* 차트 배경 완전 투명화 및 캔버스 자체 곡률 추가 (잘림 방지) */
+/* 차트 배경 완전 투명화 및 캔버스 곡률 추가 */
 [data-testid="stVegaLiteChart"] {{
     background: transparent !important; 
     border: none !important;
@@ -264,14 +257,8 @@ def load_excel_data(uploaded_file):
 # [화면 A] 실험 세팅 모드 (Setup)
 # ==========================================
 if st.session_state.app_mode == "Setup":
-    # [핵심 해결] <h2> 태그 안에 로고와 글씨를 함께 넣고 display: flex 적용 (줄바꿈 원천 차단)
-    st.markdown(f"""
-    <div class="title-glass-container">
-        <h2 style="margin: 0; padding: 0; display: flex; align-items: center;">
-            {logo_html} NBEDL AI 기반 공정 최적화 시스템
-        </h2>
-    </div>
-    """, unsafe_allow_html=True)
+    # [해결 1] 로고와 제목을 단 한 줄의 HTML 문자열로 렌더링 (줄바꿈 원천 차단)
+    st.markdown(f'<div class="title-glass-container">{logo_html}<h2 style="margin: 0; padding: 0;">NBEDL AI 기반 공정 최적화 시스템</h2></div>', unsafe_allow_html=True)
     
     with st.container(border=True):
         st.markdown("<h5 style='font-weight: 800;'>기존 실험 데이터 불러오기</h5>", unsafe_allow_html=True)
@@ -371,14 +358,8 @@ elif st.session_state.app_mode == "Dashboard":
     
     display_exp_name = st.session_state.exp_name if st.session_state.exp_name.strip() else "NBEDL_Experiment"
     
-    # [해결] 동일하게 한 줄 출력
-    st.markdown(f"""
-    <div class="title-glass-container">
-        <h2 style="margin: 0; padding: 0; display: flex; align-items: center;">
-            {logo_html} NBEDL Exp Assistant : {display_exp_name}
-        </h2>
-    </div>
-    """, unsafe_allow_html=True)
+    # [해결 1] 로고 정렬
+    st.markdown(f'<div class="title-glass-container">{logo_html}<h2 style="margin: 0; padding: 0;">NBEDL Exp Assistant : {display_exp_name}</h2></div>', unsafe_allow_html=True)
     
     with st.sidebar:
         st.header("📂 데이터 관리 패널")
