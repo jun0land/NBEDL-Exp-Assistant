@@ -23,6 +23,7 @@ components.html(
         var inputs = document.querySelectorAll('input');
         inputs.forEach(function(input) {
             input.setAttribute('autocomplete', 'new-password');
+            input.setAttribute('data-lpignore', 'true');
         });
     }, 1000);
     </script>
@@ -40,11 +41,11 @@ def get_base64_of_bin_file(bin_file):
 bg_base64 = get_base64_of_bin_file('liquid_bg.png')
 logo_base64 = get_base64_of_bin_file('logo.png')
 
-# [해결 1] 로고 정렬: 엔터 없이 한 줄로 묶기 위한 HTML 변수 생성
+# 로고 정렬: 엔터 없이 한 줄로 묶기 위한 HTML 변수 생성
 logo_html = f'<img src="data:image/png;base64,{logo_base64}" height="42" style="vertical-align: middle; margin-right: 12px;">' if logo_base64 else ""
 
 # =========================================================================
-# 3. 완벽 분석 적용 CSS
+# 3. 완벽 분석 적용 CSS (+ 버튼 호버 컬러 효과 복구)
 # =========================================================================
 custom_css = f"""
 <style>
@@ -86,7 +87,7 @@ html, body, p, h1, h2, h3, h4, h5, h6, label, span, div {{ font-family: 'Pretend
     margin-bottom: 16px !important;
 }}
 
-/* [해결 2] 컨테이너 내부의 보이지 않는 흰색 블럭 강제 투명화 */
+/* 컨테이너 내부의 보이지 않는 흰색 블럭 강제 투명화 */
 [data-testid="stVerticalBlockBorderWrapper"] > div {{
     background: transparent !important;
 }}
@@ -105,7 +106,7 @@ html, body, p, h1, h2, h3, h4, h5, h6, label, span, div {{ font-family: 'Pretend
 }}
 
 /* ========================================================================= */
-/* ✅ [해결 3] 탭(Tabs) 내부의 모든 하위 요소 배경까지 투명하게 강제 날리기 */
+/* 탭(Tabs) 내부의 모든 하위 요소 배경까지 투명하게 강제 날리기 */
 /* ========================================================================= */
 [data-testid="stTabs"] [data-baseweb="tab-list"],
 [data-testid="stTabs"] [data-baseweb="tab-list"] * {{
@@ -126,7 +127,7 @@ html, body, p, h1, h2, h3, h4, h5, h6, label, span, div {{ font-family: 'Pretend
 }}
 
 /* --------------------------------------------------- */
-/* ✅ [해결 2] 파일 업로더 회색 바탕 없애고 유리 질감 뚫어주기 */
+/* 파일 업로더 회색 바탕 없애고 유리 질감 뚫어주기 */
 /* --------------------------------------------------- */
 [data-testid="stFileUploader"] {{
     background: rgba(255, 255, 255, 0.1) !important;
@@ -137,6 +138,8 @@ html, body, p, h1, h2, h3, h4, h5, h6, label, span, div {{ font-family: 'Pretend
 }}
 [data-testid="stFileUploader"] section {{ background: transparent !important; }}
 [data-testid="stFileUploader"] button {{ background: rgba(255,255,255,0.4) !important; border: 1px solid rgba(255,255,255,0.6) !important; box-shadow: none !important; }}
+/* 업로더 내부 버튼도 호버 색상 복구 */
+[data-testid="stFileUploader"] button:hover {{ background: #ed542b !important; color: white !important; border-color: #ed542b !important; }}
 
 /* 폼 내부에 변수별로 묶인 소그룹 */
 [data-testid="stForm"] [data-testid="column"] {{
@@ -161,18 +164,39 @@ div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-w
     border-color: #ed542b !important;
 }}
 
-/* 버튼 공통 투명화 */
+/* ========================================================================= */
+/* ✅ 버튼 공통 투명화 및 Hover 색상 전환 효과 완벽 복구 */
+/* ========================================================================= */
 .stButton > button {{
     border-radius: 12px !important; 
-    border: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.5) !important; /* 투명 유리 테두리 유지 */
     background: rgba(255,255,255,0.5) !important;
     backdrop-filter: blur(20px) !important;
     font-weight: 700 !important;
     color: #1a1a1a !important;
+    transition: all 0.2s ease !important; /* 부드러운 전환 효과 */
 }}
+
+/* 일반 버튼에 마우스 올렸을 때의 변화 */
+.stButton > button:hover {{
+    transform: translateY(-2px) !important; 
+    background: #ed542b !important; /* 주황색으로 배경 변경 */
+    border-color: #ed542b !important; 
+    color: white !important; /* 글씨 흰색으로 변경 */
+    box-shadow: 0 8px 20px rgba(237,84,43,0.25) !important; /* 주황색 옅은 그림자 발산 */
+}}
+
+/* Primary 버튼(원래 주황색인 버튼) */
 .stButton > button[kind="primary"] {{
     background: linear-gradient(135deg, #ed542b, #f68b21) !important;
+    border: none !important;
     color: white !important;
+}}
+
+/* Primary 버튼에 마우스 올렸을 때의 변화 (조금 더 밝아지는 디테일) */
+.stButton > button[kind="primary"]:hover {{
+    filter: brightness(1.1) !important; /* 밝기 증가 */
+    box-shadow: 0 8px 20px rgba(237,84,43,0.4) !important;
 }}
 
 /* 차트 배경 완전 투명화 및 캔버스 곡률 추가 */
@@ -257,7 +281,7 @@ def load_excel_data(uploaded_file):
 # [화면 A] 실험 세팅 모드 (Setup)
 # ==========================================
 if st.session_state.app_mode == "Setup":
-    # [해결 1] 로고와 제목을 단 한 줄의 HTML 문자열로 렌더링 (줄바꿈 원천 차단)
+    # 로고와 제목을 단 한 줄의 HTML 문자열로 렌더링
     st.markdown(f'<div class="title-glass-container">{logo_html}<h2 style="margin: 0; padding: 0;">NBEDL AI 기반 공정 최적화 시스템</h2></div>', unsafe_allow_html=True)
     
     with st.container(border=True):
@@ -358,7 +382,7 @@ elif st.session_state.app_mode == "Dashboard":
     
     display_exp_name = st.session_state.exp_name if st.session_state.exp_name.strip() else "NBEDL_Experiment"
     
-    # [해결 1] 로고 정렬
+    # 로고 정렬
     st.markdown(f'<div class="title-glass-container">{logo_html}<h2 style="margin: 0; padding: 0;">NBEDL Exp Assistant : {display_exp_name}</h2></div>', unsafe_allow_html=True)
     
     with st.sidebar:
