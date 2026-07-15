@@ -217,6 +217,64 @@ div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-w
 st.markdown(custom_css, unsafe_allow_html=True)
 
 # ==========================================
+# 3.5 사용 설명서(메뉴얼) 팝업
+# ==========================================
+MANUAL_MD = """
+이 앱은 실험 조건과 결과를 입력하면, **AI(베이지안 최적화)** 가 다음에 시도해볼
+**최적의 공정 조건**을 추천해 주는 실험 보조 도구입니다.
+
+---
+
+#### 🚀 단계별 따라하기
+
+**STEP 1. 프로젝트 설정** &nbsp;·&nbsp; *실험 설정 화면*
+- 이미 실험 데이터 파일(.xlsx)이 있다면 → 맨 위 **"기존 실험 데이터 불러오기"** 에 업로드하면 설정이 자동으로 채워집니다.
+- 처음이라면 직접 입력하세요:
+    - **실험 프로젝트 이름** (예: `NBEDL_Experiment_01`)
+    - **목표 지표 이름** (예: `J_sc`) 과 **최적화 방향** (최대화 / 최소화)
+    - **환경 변수** — 온도·습도처럼 기록만 하는 값 (선택)
+    - **공정 변수** — AI가 탐색할 조건. 이름·단위·타입(실수/정수/범주)·범위(또는 옵션)를 지정하고, **"➕ 공정 변수 블럭 추가"** 로 여러 개 추가
+- 다 됐으면 **"🚀 실험 시작 및 대시보드 생성"** 클릭
+
+**STEP 2. 실험 결과 입력** &nbsp;·&nbsp; *📝 신규 실험 입력 탭*
+- 각 조건값과 결과값을 넣고 **"➕ 데이터 추가"** 클릭
+- 잘못 넣었다면 **"↩️ 마지막 입력 취소"** 로 직전 데이터 삭제
+
+**STEP 3. 데이터 검토** &nbsp;·&nbsp; *🗂️ 데이터베이스 관리 탭*
+- 지금까지 입력한 모든 이력을 표에서 확인·수정
+- **"학습 적용"** 체크를 해제하면 그 데이터는 AI 학습에서 제외됩니다 (이상치 처리에 유용)
+
+**STEP 4. AI 추천 받기** &nbsp;·&nbsp; *🤖 AI 최적화 대시보드 탭*
+- **"🚀 AI 계산 실행"** 클릭 → 다음에 시도할 **추천 조건 3가지** 제시
+- **경향 곡선**으로 실험이 목표에 수렴하는지 확인
+- ⚠️ 최소 **2개 이상의 유효 데이터**가 있어야 계산됩니다
+
+**STEP 5. 저장 & 관리** &nbsp;·&nbsp; *왼쪽 사이드바*
+- **"📥 최신 데이터 Excel 다운로드"** 로 저장 → 다음에 이 파일을 STEP 1에서 올리면 이어서 작업 가능
+- "🛠️ 환경 설정으로 돌아가기" / "⚠️ 모든 데이터 초기화"
+
+---
+
+#### ⚠️ 주의사항 & 팁
+- **자동 저장이 안 됩니다.** 입력한 데이터는 브라우저 세션에만 있어, 새로고침하거나 창을 닫으면 사라질 수 있습니다. **작업 후 반드시 Excel로 다운로드**하세요.
+- **"모든 데이터 초기화"는 되돌릴 수 없습니다.** 초기화 전에 꼭 저장하세요.
+- **데이터가 많을수록 AI 추천이 정확**해집니다. 초반엔 다양한 조건을 폭넓게 시도해 보세요.
+- 같은 조건을 여러 번 반복 측정하면, AI가 **이상치를 자동으로 걸러** 평균을 사용합니다.
+"""
+
+@st.dialog("📖 NBEDL Exp Assistant 사용 설명서", width="large")
+def show_manual():
+    st.markdown(MANUAL_MD)
+
+def render_title_bar(title_html, key):
+    col_title, col_btn = st.columns([6, 1], vertical_alignment="center")
+    with col_title:
+        st.markdown(title_html, unsafe_allow_html=True)
+    with col_btn:
+        if st.button("📖 메뉴얼", use_container_width=True, key=key):
+            show_manual()
+
+# ==========================================
 # 4. 시스템 상태 초기화
 # ==========================================
 if "app_mode" not in st.session_state:
@@ -284,7 +342,7 @@ def load_excel_data(uploaded_file):
 # [화면 A] 실험 세팅 모드 (Setup)
 # ==========================================
 if st.session_state.app_mode == "Setup":
-    st.markdown(f'<div class="title-glass-container">{logo_html}<h2>NBEDL AI 기반 공정 최적화 시스템</h2></div>', unsafe_allow_html=True)
+    render_title_bar(f'<div class="title-glass-container">{logo_html}<h2>NBEDL AI 기반 공정 최적화 시스템</h2></div>', key="manual_setup")
     
     with st.container(border=True):
         st.markdown("<h5 style='font-weight: 800;'>기존 실험 데이터 불러오기</h5>", unsafe_allow_html=True)
@@ -384,7 +442,7 @@ elif st.session_state.app_mode == "Dashboard":
     
     display_exp_name = st.session_state.exp_name if st.session_state.exp_name.strip() else "NBEDL_Experiment"
     
-    st.markdown(f'<div class="title-glass-container">{logo_html}<h2>NBEDL Exp Assistant : {display_exp_name}</h2></div>', unsafe_allow_html=True)
+    render_title_bar(f'<div class="title-glass-container">{logo_html}<h2>NBEDL Exp Assistant : {display_exp_name}</h2></div>', key="manual_dash")
     
     with st.sidebar:
         st.header("📂 데이터 관리 패널")
