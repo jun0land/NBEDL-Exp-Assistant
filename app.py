@@ -219,106 +219,196 @@ st.markdown(custom_css, unsafe_allow_html=True)
 # ==========================================
 # 3.5 사용 설명서(메뉴얼) 팝업
 # ==========================================
-MANUAL_MD = """
-이 앱은 실험 조건과 결과를 입력하면, **AI(베이지안 최적화)** 가 다음에 시도해볼
-**최적의 공정 조건**을 추천해 주는 실험 보조 도구입니다.
+MANUAL_HTML = """
+<p>이 앱은 실험 조건과 결과를 입력하면, <b>AI(베이지안 최적화)</b>가 다음에 시도해볼
+<b>최적의 공정 조건</b>을 추천해 주는 실험 보조 도구입니다.</p>
 
----
+<h4>🚀 단계별 따라하기</h4>
 
-#### 🚀 단계별 따라하기
+<div class="nbedl-step">STEP 1. 프로젝트 설정 <span class="nbedl-loc">· 실험 설정 화면</span></div>
+<ul>
+  <li>이미 실험 데이터 파일(.xlsx)이 있다면 → 맨 위 <b>"기존 실험 데이터 불러오기"</b>에 업로드하면 설정이 자동으로 채워집니다.</li>
+  <li>처음이라면 직접 입력: <b>실험 프로젝트 이름</b>(예: <code>NBEDL_Experiment_01</code>), <b>목표 지표 이름</b>(예: <code>J_sc</code>)과 <b>최적화 방향</b>(최대화/최소화), <b>환경 변수</b>(온도·습도 등, 선택), <b>공정 변수</b>(이름·단위·타입·범위). <b>"➕ 공정 변수 블럭 추가"</b>로 여러 개 추가.</li>
+  <li>다 됐으면 <b>"🚀 실험 시작 및 대시보드 생성"</b> 클릭</li>
+</ul>
 
-**STEP 1. 프로젝트 설정** &nbsp;·&nbsp; *실험 설정 화면*
-- 이미 실험 데이터 파일(.xlsx)이 있다면 → 맨 위 **"기존 실험 데이터 불러오기"** 에 업로드하면 설정이 자동으로 채워집니다.
-- 처음이라면 직접 입력하세요:
-    - **실험 프로젝트 이름** (예: `NBEDL_Experiment_01`)
-    - **목표 지표 이름** (예: `J_sc`) 과 **최적화 방향** (최대화 / 최소화)
-    - **환경 변수** — 온도·습도처럼 기록만 하는 값 (선택)
-    - **공정 변수** — AI가 탐색할 조건. 이름·단위·타입(실수/정수/범주)·범위(또는 옵션)를 지정하고, **"➕ 공정 변수 블럭 추가"** 로 여러 개 추가
-- 다 됐으면 **"🚀 실험 시작 및 대시보드 생성"** 클릭
+<div class="nbedl-step">STEP 2. 실험 결과 입력 <span class="nbedl-loc">· 📝 신규 실험 입력 탭</span></div>
+<ul>
+  <li>각 조건값과 결과값을 넣고 <b>"➕ 데이터 추가"</b> 버튼으로 저장 <span class="nbedl-tip">(Enter는 값 확정만, 추가는 버튼으로)</span></li>
+  <li>잘못 넣었다면 <b>"↩️ 마지막 입력 취소"</b>로 직전 데이터 삭제</li>
+</ul>
 
-**STEP 2. 실험 결과 입력** &nbsp;·&nbsp; *📝 신규 실험 입력 탭*
-- 각 조건값과 결과값을 넣고 **"➕ 데이터 추가"** 클릭
-- 잘못 넣었다면 **"↩️ 마지막 입력 취소"** 로 직전 데이터 삭제
+<div class="nbedl-step">STEP 3. 데이터 검토 <span class="nbedl-loc">· 🗂️ 데이터베이스 관리 탭</span></div>
+<ul>
+  <li>지금까지 입력한 모든 이력을 표에서 확인·수정</li>
+  <li><b>"학습 적용"</b> 체크를 해제하면 그 데이터는 AI 학습에서 제외됩니다 (이상치 처리에 유용)</li>
+</ul>
 
-**STEP 3. 데이터 검토** &nbsp;·&nbsp; *🗂️ 데이터베이스 관리 탭*
-- 지금까지 입력한 모든 이력을 표에서 확인·수정
-- **"학습 적용"** 체크를 해제하면 그 데이터는 AI 학습에서 제외됩니다 (이상치 처리에 유용)
+<div class="nbedl-step">STEP 4. AI 추천 받기 <span class="nbedl-loc">· 🤖 AI 최적화 대시보드 탭</span></div>
+<ul>
+  <li><b>"🚀 AI 계산 실행"</b> 클릭 → 다음에 시도할 <b>추천 조건 3가지</b> 제시</li>
+  <li><b>경향 곡선</b>으로 실험이 목표에 수렴하는지 확인</li>
+  <li>⚠️ 최소 <b>2개 이상의 유효 데이터</b>가 있어야 계산됩니다</li>
+</ul>
 
-**STEP 4. AI 추천 받기** &nbsp;·&nbsp; *🤖 AI 최적화 대시보드 탭*
-- **"🚀 AI 계산 실행"** 클릭 → 다음에 시도할 **추천 조건 3가지** 제시
-- **경향 곡선**으로 실험이 목표에 수렴하는지 확인
-- ⚠️ 최소 **2개 이상의 유효 데이터**가 있어야 계산됩니다
+<div class="nbedl-step">STEP 5. 저장 &amp; 관리 <span class="nbedl-loc">· 왼쪽 사이드바</span></div>
+<ul>
+  <li><b>"📥 최신 데이터 Excel 다운로드"</b>로 저장 → 다음에 이 파일을 STEP 1에서 올리면 이어서 작업 가능</li>
+  <li>"🛠️ 환경 설정으로 돌아가기" / "⚠️ 모든 데이터 초기화"</li>
+</ul>
 
-**STEP 5. 저장 & 관리** &nbsp;·&nbsp; *왼쪽 사이드바*
-- **"📥 최신 데이터 Excel 다운로드"** 로 저장 → 다음에 이 파일을 STEP 1에서 올리면 이어서 작업 가능
-- "🛠️ 환경 설정으로 돌아가기" / "⚠️ 모든 데이터 초기화"
-
----
-
-#### ⚠️ 주의사항 & 팁
-- **자동 저장이 안 됩니다.** 입력한 데이터는 브라우저 세션에만 있어, 새로고침하거나 창을 닫으면 사라질 수 있습니다. **작업 후 반드시 Excel로 다운로드**하세요.
-- **"모든 데이터 초기화"는 되돌릴 수 없습니다.** 초기화 전에 꼭 저장하세요.
-- **데이터가 많을수록 AI 추천이 정확**해집니다. 초반엔 다양한 조건을 폭넓게 시도해 보세요.
-- 같은 조건을 여러 번 반복 측정하면, AI가 **이상치를 자동으로 걸러** 평균을 사용합니다.
+<h4>⚠️ 주의사항 &amp; 팁</h4>
+<div class="nbedl-note">
+  <ul>
+    <li><b>자동 저장이 안 됩니다.</b> 데이터는 브라우저 세션에만 있어, 새로고침하거나 창을 닫으면 사라질 수 있습니다. <b>작업 후 반드시 Excel로 다운로드</b>하세요.</li>
+    <li><b>"모든 데이터 초기화"는 되돌릴 수 없습니다.</b> 초기화 전에 꼭 저장하세요.</li>
+    <li><b>데이터가 많을수록 AI 추천이 정확</b>해집니다. 초반엔 다양한 조건을 폭넓게 시도해 보세요.</li>
+    <li>같은 조건을 여러 번 반복 측정하면, AI가 <b>이상치를 자동으로 걸러</b> 평균을 사용합니다.</li>
+  </ul>
+</div>
 """
 
-# 메뉴얼 버튼: 좌측 타이틀 배너(.title-glass-container)와 통일감 있는 유리 질감 + 오렌지 액센트
-manual_btn_css = """
-<style>
-/* 컬럼 안에서 버튼을 우측·수직 중앙으로 정렬 */
-div[class*="st-key-manual_"] {
-    display: flex !important;
-    justify-content: flex-end !important;
-    align-items: center !important;
-    height: 100% !important;
+DRAWER_CSS = """
+#nbedl-manual-root, #nbedl-manual-root * { box-sizing: border-box; }
+#nbedl-manual-root { font-family: 'Pretendard', sans-serif; }
+
+.nbedl-bookmark {
+  position: fixed; top: 168px; right: 0; z-index: 2147483401;
+  display: flex; align-items: center; justify-content: center;
+  padding: 18px 9px; writing-mode: vertical-rl; text-orientation: mixed;
+  background: linear-gradient(160deg, #ed542b, #f68b21); color: #fff;
+  font-weight: 800; letter-spacing: 2px; font-size: 15px;
+  border-radius: 14px 0 0 14px; box-shadow: -4px 6px 18px rgba(237,84,43,0.35);
+  cursor: pointer; user-select: none;
+  transition: padding-right .18s ease, box-shadow .18s ease, transform .18s ease;
 }
-/* 버튼 자체를 배너와 같은 유리 질감으로 */
-div[class*="st-key-manual_"] button {
-    width: auto !important;
-    min-height: 0 !important;
-    padding: 12px 22px !important;
-    background: rgba(255, 255, 255, 0.15) !important;
-    backdrop-filter: blur(48px) saturate(150%) !important;
-    -webkit-backdrop-filter: blur(48px) saturate(150%) !important;
-    border: none !important;
-    border-left: 6px solid #ed542b !important;   /* 배너와 동일한 오렌지 액센트 */
-    border-radius: 16px !important;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.05) !important;
-    color: #1a1a1a !important;
-    font-weight: 800 !important;
-    white-space: nowrap !important;
+.nbedl-bookmark:hover { padding-right: 15px; box-shadow: -7px 8px 24px rgba(237,84,43,0.5); }
+
+.nbedl-backdrop {
+  position: fixed; inset: 0; z-index: 2147483500;
+  background: rgba(20,20,20,0.30);
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+  opacity: 0; pointer-events: none; transition: opacity .35s ease;
 }
-/* 라벨(아이콘+글자)을 버튼 정중앙에 배치 */
-div[class*="st-key-manual_"] button > div,
-div[class*="st-key-manual_"] button p {
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    margin: 0 !important;
-    width: 100% !important;
+.nbedl-panel {
+  position: fixed; top: 0; right: 0; height: 100vh; width: min(460px, 92vw);
+  z-index: 2147483501; overflow-y: auto; padding: 30px 30px 44px;
+  background: rgba(255,255,255,0.94);
+  -webkit-backdrop-filter: blur(26px) saturate(160%); backdrop-filter: blur(26px) saturate(160%);
+  border-left: 6px solid #ed542b; box-shadow: -18px 0 50px rgba(0,0,0,0.20);
+  transform: translateX(106%); transition: transform .38s cubic-bezier(.22,.61,.36,1);
+  color: #1a1a1a;
 }
-div[class*="st-key-manual_"] button:hover {
-    transform: translateY(-2px) !important;
-    background: #ed542b !important;
-    border-left-color: #ed542b !important;
-    color: white !important;
-    box-shadow: 0 8px 20px rgba(237, 84, 43, 0.25) !important;
+#nbedl-manual-root.open .nbedl-backdrop { opacity: 1; pointer-events: auto; }
+#nbedl-manual-root.open .nbedl-panel { transform: translateX(0); }
+
+.nbedl-close {
+  position: absolute; top: 16px; right: 18px; width: 34px; height: 34px;
+  border: none; border-radius: 10px; background: rgba(0,0,0,0.06); color: #333;
+  font-size: 15px; cursor: pointer; transition: background .2s ease, color .2s ease;
 }
-</style>
+.nbedl-close:hover { background: #ed542b; color: #fff; }
+
+.nbedl-title { font-size: 21px; font-weight: 900; color: #ed542b; margin: 2px 40px 18px 0;
+  border-bottom: 2px solid rgba(237,84,43,0.25); padding-bottom: 12px; }
+.nbedl-panel h4 { font-size: 16px; font-weight: 800; color: #ed542b; margin: 24px 0 8px; }
+.nbedl-panel p { line-height: 1.65; margin: 8px 0; }
+.nbedl-panel ul { margin: 6px 0 14px; padding-left: 20px; }
+.nbedl-panel li { line-height: 1.6; margin: 5px 0; }
+.nbedl-step { font-weight: 800; margin: 18px 0 4px; color: #1a1a1a; }
+.nbedl-loc { font-weight: 600; color: #9a8f89; font-size: 0.9em; }
+.nbedl-tip { color: #ed542b; font-weight: 700; font-size: 0.9em; }
+.nbedl-panel code { background: rgba(237,84,43,0.10); color: #c53a17; padding: 1px 6px; border-radius: 6px; font-size: 0.9em; }
+.nbedl-note { background: rgba(255,244,235,0.85); border-left: 4px solid #f68b21; border-radius: 10px; padding: 14px 16px; margin-top: 16px; }
+.nbedl-note ul { margin: 0; }
 """
-st.markdown(manual_btn_css, unsafe_allow_html=True)
 
-@st.dialog("📖 NBEDL Exp Assistant 사용 설명서", width="large")
-def show_manual():
-    st.markdown(MANUAL_MD)
+def render_manual_drawer():
+    """우측 모서리 북마크 탭 + 슬라이드-인 메뉴얼 패널을 부모 문서에 주입한다.
+    st.markdown은 <script>를 제거하므로 components.html(iframe)에서 JS로 주입한다."""
+    payload = """
+<script>
+(function() {
+  try {
+    var doc = window.parent.document;
+    var ROOT_ID = 'nbedl-manual-root';
+    var STYLE_ID = 'nbedl-manual-style';
+    var oldRoot = doc.getElementById(ROOT_ID);
+    var wasOpen = !!(oldRoot && oldRoot.classList.contains('open'));  // 리런 시 열림 상태 유지
+    if (oldRoot) oldRoot.remove();
+    var oldStyle = doc.getElementById(STYLE_ID);  if (oldStyle) oldStyle.remove();
 
-def render_title_bar(title_html, key):
-    col_title, col_btn = st.columns([6, 1], vertical_alignment="center")
-    with col_title:
-        st.markdown(title_html, unsafe_allow_html=True)
-    with col_btn:
-        if st.button("📖 메뉴얼", use_container_width=False, key=key):
-            show_manual()
+    var style = doc.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = `__CSS__`;
+    doc.head.appendChild(style);
+
+    var root = doc.createElement('div');
+    root.id = ROOT_ID;
+    root.innerHTML = `
+      <div class="nbedl-bookmark" title="사용 설명서 열기"><span>📖 사용 설명서</span></div>
+      <div class="nbedl-backdrop"></div>
+      <aside class="nbedl-panel" role="dialog" aria-label="사용 설명서">
+        <button class="nbedl-close" title="닫기 (Esc)">✕</button>
+        <div class="nbedl-title">📖 NBEDL Exp Assistant 사용 설명서</div>
+        __CONTENT__
+      </aside>`;
+    doc.body.appendChild(root);
+    if (wasOpen) root.classList.add('open');
+
+    var openFn  = function() { root.classList.add('open'); };
+    var closeFn = function() { root.classList.remove('open'); };
+    root.querySelector('.nbedl-bookmark').addEventListener('click', openFn);
+    root.querySelector('.nbedl-backdrop').addEventListener('click', closeFn);
+    root.querySelector('.nbedl-close').addEventListener('click', closeFn);
+
+    if (!window.parent.__nbedlEsc) {
+      window.parent.__nbedlEsc = true;
+      doc.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+          var r = doc.getElementById('nbedl-manual-root');
+          if (r) r.classList.remove('open');
+        }
+      });
+    }
+  } catch (err) { /* cross-origin 등 접근 불가 시 조용히 무시 */ }
+})();
+</script>
+"""
+    payload = payload.replace("__CSS__", DRAWER_CSS).replace("__CONTENT__", MANUAL_HTML)
+    components.html(payload, height=0)
+
+
+def disable_form_enter_submit():
+    """입력 폼(st.form) 안에서 Enter가 폼을 제출(데이터 추가)하지 않도록 막는다.
+    값은 입력칸에 그대로 남고, 추가는 '데이터 추가' 버튼으로만 수행된다."""
+    components.html("""
+<script>
+(function() {
+  try {
+    var doc = window.parent.document;
+    if (window.parent.__nbedlEnterGuard) return;
+    window.parent.__nbedlEnterGuard = true;
+    doc.addEventListener('keydown', function(e) {
+      if (e.key !== 'Enter') return;
+      var t = e.target;
+      if (!t || !t.closest) return;
+      var inForm = t.closest('[data-testid="stForm"]');
+      var tag = (t.tagName || '').toLowerCase();
+      if (inForm && (tag === 'input' || tag === 'select')) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      }
+    }, true);  // capture 단계에서 가로채 Streamlit의 제출 핸들러보다 먼저 처리
+  } catch (err) { /* 무시 */ }
+})();
+</script>
+""", height=0)
+
+
+render_manual_drawer()
+disable_form_enter_submit()
 
 # ==========================================
 # 4. 시스템 상태 초기화
@@ -388,7 +478,7 @@ def load_excel_data(uploaded_file):
 # [화면 A] 실험 세팅 모드 (Setup)
 # ==========================================
 if st.session_state.app_mode == "Setup":
-    render_title_bar(f'<div class="title-glass-container">{logo_html}<h2>NBEDL AI 기반 공정 최적화 시스템</h2></div>', key="manual_setup")
+    st.markdown(f'<div class="title-glass-container">{logo_html}<h2>NBEDL AI 기반 공정 최적화 시스템</h2></div>', unsafe_allow_html=True)
     
     with st.container(border=True):
         st.markdown("<h5 style='font-weight: 800;'>기존 실험 데이터 불러오기</h5>", unsafe_allow_html=True)
@@ -488,7 +578,7 @@ elif st.session_state.app_mode == "Dashboard":
     
     display_exp_name = st.session_state.exp_name if st.session_state.exp_name.strip() else "NBEDL_Experiment"
     
-    render_title_bar(f'<div class="title-glass-container">{logo_html}<h2>NBEDL Exp Assistant : {display_exp_name}</h2></div>', key="manual_dash")
+    st.markdown(f'<div class="title-glass-container">{logo_html}<h2>NBEDL Exp Assistant : {display_exp_name}</h2></div>', unsafe_allow_html=True)
     
     with st.sidebar:
         st.header("📂 데이터 관리 패널")
