@@ -32,12 +32,31 @@ components.html(
 # ==========================================
 # 2. 이미지 Base64 인코딩
 # ==========================================
+@st.cache_data(show_spinner=False)
 def get_base64_of_bin_file(bin_file):
     if os.path.exists(bin_file):
         with open(bin_file, 'rb') as f: return base64.b64encode(f.read()).decode()
     return ""
 
-bg_base64 = get_base64_of_bin_file('liquid_bg.png')
+# 배경 이미지 최적화:
+# 원본 PNG는 4096px/8.5MB라 base64로 약 11MB에 달해 로딩을 크게 지연시켰다.
+# 2048px WebP(82KB, PSNR 40.5dB로 육안 차이 없음)로 줄이고, static 서빙이 가능하면
+# URL로 참조해 브라우저가 캐시하도록 한다(새로고침 시 재전송 없음).
+# static 서빙이 불가한 환경에서는 base64 인라인으로 폴백한다. (원본 PNG는 소스로 보존)
+BG_STATIC_PATH = 'static/liquid_bg.webp'
+
+def _resolve_bg_url():
+    if os.path.exists(BG_STATIC_PATH):
+        try:
+            if st.get_option("server.enableStaticServing"):
+                return "app/static/liquid_bg.webp"
+        except Exception:
+            pass
+        return f"data:image/webp;base64,{get_base64_of_bin_file(BG_STATIC_PATH)}"
+    b64 = get_base64_of_bin_file('liquid_bg.png')
+    return f"data:image/png;base64,{b64}" if b64 else ""
+
+bg_url = _resolve_bg_url()
 logo_base64 = get_base64_of_bin_file('logo.png')
 
 logo_html = f'<img src="data:image/png;base64,{logo_base64}" height="42" style="vertical-align: middle; margin-right: 12px;">' if logo_base64 else ""
@@ -53,7 +72,7 @@ html, body, p, h1, h2, h3, h4, h5, h6, label, span, div {{ font-family: 'Pretend
 
 /* 최상위 배경 이미지 */
 .stApp {{
-    background: linear-gradient(135deg, rgba(255,255,255,0.45), rgba(255,255,255,0.25)), url("data:image/png;base64,{bg_base64}");
+    background: linear-gradient(135deg, rgba(255,255,255,0.45), rgba(255,255,255,0.25)), url("{bg_url}");
     background-size: cover;
     background-position: center;
     background-attachment: fixed;
@@ -291,7 +310,8 @@ DRAWER_CSS = """
   opacity: 0; pointer-events: none; transition: opacity .35s ease;
 }
 .nbedl-panel {
-  position: fixed; top: 0; right: 0; height: 100vh; width: min(460px, 92vw);
+  /* zoom 스케일 하에서 vh/vw는 뷰포트 고정이라 어긋남 → top/bottom 앵커 + % 사용 */
+  position: fixed; top: 0; bottom: 0; right: 0; width: min(460px, 92%);
   z-index: 2147483501; overflow-y: auto; padding: 30px 30px 44px;
   background: rgba(255,255,255,0.94);
   -webkit-backdrop-filter: blur(26px) saturate(160%); backdrop-filter: blur(26px) saturate(160%);
@@ -407,6 +427,44 @@ def disable_form_enter_submit():
 """, height=0)
 
 
+def apply_ui_zoom():
+    """화면 크기에 따라 UI를 '확대/축소'한다. (공간만 늘어나는 리플로우 대신 스케일)
+    기준 1440px에서 1.0배, 0.85~1.35배로 클램프.
+    zoom은 transform:scale과 달리 재레이아웃이라 글자가 뭉개지지 않는다.
+
+    주의: body 전체에 zoom을 걸면 Streamlit 내부의 100vh 기반 레이아웃(stMain 등)과
+    충돌한다(zoom은 vh를 보정하지 않아 부모보다 커져 화면이 위로 밀림). 그래서 vh 의존이
+    없는 콘텐츠 컨테이너와 드로어에만 적용한다.
+    또한 인라인 스타일은 리런 시 DOM이 교체되며 사라지므로 <style> 규칙으로 주입한다."""
+    components.html("""
+<script>
+(function() {
+  try {
+    var win = window.parent, doc = win.document;
+    var DESIGN = 1440, MIN = 0.85, MAX = 1.35;
+    var ID = 'nbedl-zoom-style';
+    var st = doc.getElementById(ID);
+    if (!st) { st = doc.createElement('style'); st.id = ID; doc.head.appendChild(st); }
+    win.__nbedlApplyZoom = function() {
+      var z = win.innerWidth / DESIGN;
+      z = Math.max(MIN, Math.min(MAX, z));
+      doc.body.style.zoom = '';   // 과거 body-zoom 방식 잔재 제거
+      st.textContent =
+        '[data-testid="stMain"] .block-container { zoom: ' + z + '; }' +
+        '#nbedl-manual-root { zoom: ' + z + '; }';
+    };
+    win.__nbedlApplyZoom();
+    if (!win.__nbedlZoomBound) {
+      win.__nbedlZoomBound = true;
+      win.addEventListener('resize', function() { win.__nbedlApplyZoom(); });
+    }
+  } catch (err) { /* 무시 */ }
+})();
+</script>
+""", height=0)
+
+
+apply_ui_zoom()
 render_manual_drawer()
 disable_form_enter_submit()
 
@@ -447,6 +505,17 @@ def process_robust_data(df, feature_cols, target_col):
         robust_y.append(np.mean(valid_y))
     return robust_X, robust_y
 
+@st.cache_data(show_spinner=False, max_entries=3)
+def build_excel_bytes(df, config_vars, meta_data):
+    """Excel 바이트 생성. 다운로드 버튼 때문에 매 리런마다 재생성되던 것을 캐시한다.
+    (데이터가 바뀌면 자동으로 다시 생성된다)"""
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, sheet_name='Data', index=False)
+        pd.DataFrame(config_vars).to_excel(writer, sheet_name='Config_Vars', index=False)
+        pd.DataFrame(meta_data).to_excel(writer, sheet_name='Config_Meta', index=False)
+    return output.getvalue()
+
 def load_excel_data(uploaded_file):
     xls = pd.ExcelFile(uploaded_file, engine='openpyxl')
     df_meta = pd.read_excel(xls, 'Config_Meta')
@@ -480,23 +549,27 @@ def load_excel_data(uploaded_file):
 if st.session_state.app_mode == "Setup":
     st.markdown(f'<div class="title-glass-container">{logo_html}<h2>NBEDL AI 기반 공정 최적화 시스템</h2></div>', unsafe_allow_html=True)
     
-    with st.container(border=True):
-        st.markdown("<h5 style='font-weight: 800;'>기존 실험 데이터 불러오기</h5>", unsafe_allow_html=True)
-        uploaded_file = st.file_uploader("엑셀(xlsx) 파일을 업로드하면 설정이 자동으로 채워집니다.", type=["xlsx"])
-        if uploaded_file:
-            load_excel_data(uploaded_file)
-            st.rerun()
-    
-    with st.container(border=True):
-        colored_header(label="기본 프로젝트 설정", description="실험 이름과 최적화 목표 지표를 설정하세요.", color_name="orange-70")
-        st.session_state.exp_name = st.text_input("📝 실험 프로젝트 이름", value=st.session_state.exp_name, placeholder="예: NBEDL_Experiment_01")
-        
-        col_t1, col_t2, col_t3 = st.columns(3)
-        target_name = col_t1.text_input("목표 지표 이름", value=st.session_state.target_info["name"], placeholder="예: J_sc")
-        target_dir = col_t2.selectbox("최적화 방향", ["Maximize", "Minimize"])
-        
-        passive_val = ",".join(st.session_state.passive_vars) if st.session_state.passive_vars else ""
-        passive_input = col_t3.text_input("환경 변수 (쉼표 구분)", value=passive_val, placeholder="예: 온도 (°C), 습도 (%)")
+    col_load, col_basic = st.columns([1, 1.8], gap="medium")
+
+    with col_load:
+        with st.container(border=True):
+            st.markdown("<h5 style='font-weight: 800;'>기존 실험 데이터 불러오기</h5>", unsafe_allow_html=True)
+            uploaded_file = st.file_uploader("엑셀(xlsx) 파일을 업로드하면 설정이 자동으로 채워집니다.", type=["xlsx"])
+            if uploaded_file:
+                load_excel_data(uploaded_file)
+                st.rerun()
+
+    with col_basic:
+        with st.container(border=True):
+            colored_header(label="기본 프로젝트 설정", description="실험 이름과 최적화 목표 지표를 설정하세요.", color_name="orange-70")
+            st.session_state.exp_name = st.text_input("📝 실험 프로젝트 이름", value=st.session_state.exp_name, placeholder="예: NBEDL_Experiment_01")
+
+            col_t1, col_t2, col_t3 = st.columns(3)
+            target_name = col_t1.text_input("목표 지표 이름", value=st.session_state.target_info["name"], placeholder="예: J_sc")
+            target_dir = col_t2.selectbox("최적화 방향", ["Maximize", "Minimize"])
+
+            passive_val = ",".join(st.session_state.passive_vars) if st.session_state.passive_vars else ""
+            passive_input = col_t3.text_input("환경 변수 (쉼표 구분)", value=passive_val, placeholder="예: 온도 (°C), 습도 (%)")
     
     with st.container(border=True):
         colored_header(label="🔬 최적화 대상 공정 변수 입력", description="AI가 탐색할 공정 조건의 이름과 변수 범위를 지정하세요.", color_name="orange-70")
@@ -582,21 +655,16 @@ elif st.session_state.app_mode == "Dashboard":
     
     with st.sidebar:
         st.header("📂 데이터 관리 패널")
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            st.session_state.df_data.to_excel(writer, sheet_name='Data', index=False)
-            pd.DataFrame(st.session_state.config_vars).to_excel(writer, sheet_name='Config_Vars', index=False)
-            meta_data = {
-                "Exp_Name": [display_exp_name],
-                "Target_Name": [t_name], 
-                "Direction": [t_dir], 
-                "Passive_Vars": [",".join(st.session_state.passive_vars)]
-            }
-            pd.DataFrame(meta_data).to_excel(writer, sheet_name='Config_Meta', index=False)
-            
+        meta_data = {
+            "Exp_Name": [display_exp_name],
+            "Target_Name": [t_name],
+            "Direction": [t_dir],
+            "Passive_Vars": [",".join(st.session_state.passive_vars)]
+        }
+        excel_bytes = build_excel_bytes(st.session_state.df_data, st.session_state.config_vars, meta_data)
         file_name_export = f"{display_exp_name}_Data.xlsx"
-        
-        st.download_button(label="📥 최신 데이터 Excel 다운로드", data=output.getvalue(), file_name=file_name_export, type="primary", use_container_width=True)
+
+        st.download_button(label="📥 최신 데이터 Excel 다운로드", data=excel_bytes, file_name=file_name_export, type="primary", use_container_width=True)
         st.divider()
         if st.button("🛠️ 환경 설정으로 돌아가기", use_container_width=True):
             st.session_state.app_mode = "Setup"
