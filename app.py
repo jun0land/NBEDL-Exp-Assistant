@@ -520,6 +520,29 @@ if "df_data" not in st.session_state:
 # ==========================================
 # 5. 전처리 및 엑셀 로드 함수
 # ==========================================
+def coerce_bool_col(series):
+    """'학습_적용' 같은 체크박스 컬럼을 깨끗한 bool로 강제한다.
+
+    Excel 왕복(openpyxl round-trip)이나 concat 중 dtype 추론 과정에서 이 컬럼이
+    NaN/문자열("TRUE"/"FALSE")/숫자(0,1) 등 bool이 아닌 값으로 섞이면
+    st.column_config.CheckboxColumn이 StreamlitAPIException을 던진다. 또한 dtype이
+    깨끗하지 않으면 `df["학습_적용"] == True` 비교도 조용히 틀린 값을 걸러낼 수 있어
+    표시 전뿐 아니라 필터링 전에도 항상 이 함수를 거쳐야 한다.
+    """
+    if pd.api.types.is_bool_dtype(series):
+        return series.fillna(True)
+
+    def _conv(v):
+        if isinstance(v, bool):
+            return v
+        if pd.isna(v):
+            return True
+        if isinstance(v, (int, float)):
+            return bool(v)
+        return str(v).strip().lower() not in ("false", "0", "", "none", "nan")
+
+    return series.map(_conv).astype(bool)
+
 def process_robust_data(df, feature_cols, target_col):
     grouped = df.groupby(feature_cols)
     robust_X, robust_y = [], []
@@ -811,6 +834,9 @@ if st.session_state.app_mode == "Setup":
 # [화면 B] 실험 진행 모드 (대시보드 탭 레이아웃)
 # ==========================================
 elif st.session_state.app_mode == "Dashboard":
+    if "학습_적용" in st.session_state.df_data.columns:
+        st.session_state.df_data["학습_적용"] = coerce_bool_col(st.session_state.df_data["학습_적용"])
+
     target_names_all = [tv["Name"] for tv in st.session_state.target_vars]
     f_names = [v["Name"] for v in st.session_state.config_vars]
     
@@ -878,7 +904,7 @@ elif st.session_state.app_mode == "Dashboard":
                     unit_str = f", {tv['Unit']}" if tv.get("Unit") else ""
                     with cols[idx]:
                         st.markdown(label_style.format(f"결과값 ({t_var_name}{unit_str})"), unsafe_allow_html=True)
-                        new_row[t_var_name] = st.number_input(t_var_name, value=0.0, label_visibility="collapsed", key=f"input_target_{t_var_name}")
+                        new_row[t_var_name] = st.number_input(t_var_name, value=0.0, step=0.000001, format="%.8f", label_visibility="collapsed", key=f"input_target_{t_var_name}")
                     idx += 1
 
                 st.write("")
@@ -1054,7 +1080,7 @@ elif st.session_state.app_mode == "Dashboard":
                                             cols_rec[idx].metric(label=var["Name"], value=disp_val)
                                         style_metric_cards(background_color="transparent", border_left_color="#ed542b", border_color="transparent", box_shadow=False)
                                         pred_str = " · ".join(
-                                            f"{tv['Name']} ≈ {p:.3g}{' ' + tv['Unit'] if tv.get('Unit') else ''}"
+                                            f"{tv['Name']} ≈ {p:.6f}{' ' + tv['Unit'] if tv.get('Unit') else ''}"
                                             for tv, p in zip(st.session_state.target_vars, pred)
                                         )
                                         st.caption(f"예측 목표값: {pred_str}")
