@@ -725,15 +725,16 @@ if st.session_state.app_mode == "Setup":
 
             for i, tv in enumerate(st.session_state.target_vars):
                 with st.container(border=True):
-                    ct1, ct2 = st.columns([2, 1])
+                    ct1, ct_u, ct2 = st.columns([2, 1, 1])
                     tv["Name"] = ct1.text_input(f"목표 지표 {i+1} 이름", value=tv.get("Name", ""), key=f"tname_{i}", placeholder="예: J_sc")
+                    tv["Unit"] = ct_u.text_input("단위", value=tv.get("Unit", ""), key=f"tunit_{i}", placeholder="예: mA/cm²")
                     dir_options = ["Maximize", "Minimize"]
                     safe_dir = tv.get("Direction", "Maximize")
                     if safe_dir not in dir_options: safe_dir = "Maximize"
                     tv["Direction"] = ct2.selectbox("최적화 방향", dir_options, key=f"tdir_{i}", index=dir_options.index(safe_dir))
 
             if st.button("➕ 목표 지표 블럭 추가", use_container_width=True):
-                st.session_state.target_vars.append({"Old_Name": "", "Name": "", "Direction": "Maximize"})
+                st.session_state.target_vars.append({"Old_Name": "", "Name": "", "Unit": "", "Direction": "Maximize"})
                 st.rerun()
 
     with st.container(border=True):
@@ -793,7 +794,7 @@ if st.session_state.app_mode == "Setup":
             for var in st.session_state.config_vars + st.session_state.target_vars:
                 var["Old_Name"] = var["Name"]
 
-            new_cols = (["학습_적용"] + p_vars + [v["Name"] for v in st.session_state.config_vars]
+            new_cols = (["학습_적용", "샘플명"] + p_vars + [v["Name"] for v in st.session_state.config_vars]
                         + [tv["Name"] for tv in st.session_state.target_vars])
 
             if not st.session_state.df_data.empty:
@@ -841,12 +842,17 @@ elif st.session_state.app_mode == "Dashboard":
         with st.container(border=True):
             colored_header(label="새로운 스플릿 실험 결과 입력", description="값을 모두 적은 후 하단 '데이터 추가' 버튼을 클릭하세요.", color_name="orange-70")
             with st.form("input_form", clear_on_submit=True):
-                cols = st.columns(len(st.session_state.passive_vars) + len(st.session_state.config_vars) + len(target_names_all))
+                cols = st.columns(1 + len(st.session_state.passive_vars) + len(st.session_state.config_vars) + len(target_names_all))
                 new_row = {"학습_적용": True}
                 idx = 0
-                
+
                 label_style = "<div style='font-size: 14px; font-weight: 800; padding-bottom: 8px; color: #1a1a1a;'>{}</div>"
-                
+
+                with cols[idx]:
+                    st.markdown(label_style.format("샘플명"), unsafe_allow_html=True)
+                    new_row["샘플명"] = st.text_input("샘플명", value="", label_visibility="collapsed", key="input_sample_name")
+                idx += 1
+
                 for p_var in st.session_state.passive_vars:
                     with cols[idx]:
                         st.markdown(label_style.format(p_var), unsafe_allow_html=True)
@@ -867,9 +873,11 @@ elif st.session_state.app_mode == "Dashboard":
                             new_row[var["Name"]] = st.selectbox(disp_name, opts, label_visibility="collapsed", key=f"input_{var['Name']}")
                     idx += 1
                     
-                for t_var_name in target_names_all:
+                for tv in st.session_state.target_vars:
+                    t_var_name = tv["Name"]
+                    unit_str = f", {tv['Unit']}" if tv.get("Unit") else ""
                     with cols[idx]:
-                        st.markdown(label_style.format(f"결과값 ({t_var_name})"), unsafe_allow_html=True)
+                        st.markdown(label_style.format(f"결과값 ({t_var_name}{unit_str})"), unsafe_allow_html=True)
                         new_row[t_var_name] = st.number_input(t_var_name, value=0.0, label_visibility="collapsed", key=f"input_target_{t_var_name}")
                     idx += 1
 
@@ -906,13 +914,15 @@ elif st.session_state.app_mode == "Dashboard":
             # ---- 목표 지표 1개: 기존 단일목표 경로 (skopt GP + EI) ----
             t_name = target_names_all[0]
             t_dir = st.session_state.target_vars[0]["Direction"]
+            t_unit = st.session_state.target_vars[0].get("Unit", "")
+            t_label = f"{t_name}, {t_unit}" if t_unit else t_name
 
             valid_df = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
             c1, c2 = st.columns([1.2, 1])
 
             with c1:
                 with st.container(border=True):
-                    colored_header(label=f"📈 최적화 경향 곡선", description=f"실험이 진행됨에 따라 타겟 지표({t_name})의 수렴 상태를 보여줍니다.", color_name="green-70")
+                    colored_header(label=f"📈 최적화 경향 곡선", description=f"실험이 진행됨에 따라 타겟 지표({t_label})의 수렴 상태를 보여줍니다.", color_name="green-70")
                     if len(valid_df) > 0:
                         chart_data = valid_df[t_name].expanding().max() if "Maximize" in t_dir else valid_df[t_name].expanding().min()
                         st.line_chart(chart_data, height=350)
@@ -997,9 +1007,10 @@ elif st.session_state.app_mode == "Dashboard":
                     if len(valid_df) > 0:
                         for tv in st.session_state.target_vars:
                             tn, td = tv["Name"], tv["Direction"]
+                            unit_str = f", {tv['Unit']}" if tv.get("Unit") else ""
                             if tn in valid_df.columns:
                                 cdata = valid_df[tn].expanding().max() if "Maximize" in td else valid_df[tn].expanding().min()
-                                st.caption(f"{tn} ({td})")
+                                st.caption(f"{tn} ({td}{unit_str})")
                                 st.line_chart(cdata, height=160)
                     else:
                         st.info("분석용 데이터가 입력되지 않았습니다.")
@@ -1042,5 +1053,8 @@ elif st.session_state.app_mode == "Dashboard":
                                             disp_val = f"{round(val, 3)}{unit_str}" if isinstance(val, float) else f"{val}{unit_str}"
                                             cols_rec[idx].metric(label=var["Name"], value=disp_val)
                                         style_metric_cards(background_color="transparent", border_left_color="#ed542b", border_color="transparent", box_shadow=False)
-                                        pred_str = " · ".join(f"{tn} ≈ {p:.3g}" for tn, p in zip(target_names_all, pred))
+                                        pred_str = " · ".join(
+                                            f"{tv['Name']} ≈ {p:.3g}{' ' + tv['Unit'] if tv.get('Unit') else ''}"
+                                            for tv, p in zip(st.session_state.target_vars, pred)
+                                        )
                                         st.caption(f"예측 목표값: {pred_str}")
