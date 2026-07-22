@@ -10,6 +10,23 @@ import streamlit.components.v1 as components
 from streamlit_extras.colored_header import colored_header
 from streamlit_extras.metric_cards import style_metric_cards
 
+# 다중 목표(2개 이상) 최적화에만 쓰는 BoTorch는 무겁고(torch 포함) 목표 1개짜리 사용자에게는
+# 불필요하다. import를 감싸서, 미설치 상태에서도 단일 목표 경로(skopt)는 그대로 동작하고
+# 다중 목표 탭에서만 안내 메시지를 띄운다.
+try:
+    import torch
+    from botorch.models import SingleTaskGP, ModelListGP
+    from botorch.models.transforms.outcome import Standardize
+    from botorch.fit import fit_gpytorch_mll
+    from gpytorch.mlls import SumMarginalLogLikelihood
+    from botorch.acquisition.multi_objective.monte_carlo import qNoisyExpectedHypervolumeImprovement
+    from botorch.sampling.normal import SobolQMCNormalSampler
+    from botorch.optim import optimize_acqf
+    from botorch.utils.transforms import normalize, unnormalize
+    _BOTORCH_AVAILABLE = True
+except ImportError:
+    _BOTORCH_AVAILABLE = False
+
 # ==========================================
 # 1. 페이지 기본 설정 및 이탈 방지
 # ==========================================
@@ -194,30 +211,33 @@ div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-w
     border-color: #ed542b !important;
 }}
 
-/* 버튼 공통 투명화 및 Hover */
-.stButton > button {{
-    border-radius: 12px !important; 
-    border: 1px solid rgba(255, 255, 255, 0.5) !important; 
+/* 버튼 공통 투명화 및 Hover
+   (일반 st.button 뿐 아니라 st.download_button/st.form_submit_button도 같은 스타일을
+   받도록 .stDownloadButton, .stFormSubmitButton도 함께 지정한다. 안 그러면 이 두 위젯은
+   커스텀 그라데이션을 못 받고 Streamlit 기본 빨간색(primary red)으로 튀어 보인다.) */
+.stButton > button, .stDownloadButton > button, .stFormSubmitButton > button {{
+    border-radius: 12px !important;
+    border: 1px solid rgba(255, 255, 255, 0.5) !important;
     background: rgba(255,255,255,0.5) !important;
     backdrop-filter: blur(20px) !important;
     font-weight: 700 !important;
     color: #1a1a1a !important;
-    transition: all 0.2s ease !important; 
+    transition: all 0.2s ease !important;
 }}
-.stButton > button:hover {{
-    transform: translateY(-2px) !important; 
-    background: #ed542b !important; 
-    border-color: #ed542b !important; 
-    color: white !important; 
-    box-shadow: 0 8px 20px rgba(237,84,43,0.25) !important; 
+.stButton > button:hover, .stDownloadButton > button:hover, .stFormSubmitButton > button:hover {{
+    transform: translateY(-2px) !important;
+    background: #ed542b !important;
+    border-color: #ed542b !important;
+    color: white !important;
+    box-shadow: 0 8px 20px rgba(237,84,43,0.25) !important;
 }}
-.stButton > button[kind="primary"] {{
+.stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"], .stFormSubmitButton > button[kind="primary"] {{
     background: linear-gradient(135deg, #ed542b, #f68b21) !important;
     border: none !important;
     color: white !important;
 }}
-.stButton > button[kind="primary"]:hover {{
-    filter: brightness(1.1) !important; 
+.stButton > button[kind="primary"]:hover, .stDownloadButton > button[kind="primary"]:hover, .stFormSubmitButton > button[kind="primary"]:hover {{
+    filter: brightness(1.1) !important;
     box-shadow: 0 8px 20px rgba(237,84,43,0.4) !important;
 }}
 
@@ -428,9 +448,14 @@ def disable_form_enter_submit():
 
 
 def apply_ui_zoom():
-    """화면 크기에 따라 UI를 '확대/축소'한다. (공간만 늘어나는 리플로우 대신 스케일)
-    기준 1440px에서 1.0배, 0.85~1.35배로 클램프.
+    """화면 크기에 따라 UI를 '축소'한다. (공간만 늘어나는 리플로우 대신 스케일)
+    기준 1440px에서 1.0배, 0.85~1.0배로 클램프.
     zoom은 transform:scale과 달리 재레이아웃이라 글자가 뭉개지지 않는다.
+
+    MAX를 1.35가 아닌 1.0으로 클램프한 이유: 1440px보다 넓은(큰 모니터) 화면에서
+    확대까지 하면 UI가 과도하게 커진다는 피드백이 있었다. 축소(좁은 화면에서 0.85배)는
+    허용하되 1440px 이상에서는 더 키우지 않고 원래 크기(1.0)로 고정한다.
+    (Photodetector-app의 동일 버그 수정을 그대로 반영: pd_app/theme.py 참고)
 
     주의: body 전체에 zoom을 걸면 Streamlit 내부의 100vh 기반 레이아웃(stMain 등)과
     충돌한다(zoom은 vh를 보정하지 않아 부모보다 커져 화면이 위로 밀림). 그래서 vh 의존이
@@ -441,7 +466,7 @@ def apply_ui_zoom():
 (function() {
   try {
     var win = window.parent, doc = win.document;
-    var DESIGN = 1440, MIN = 0.85, MAX = 1.35;
+    var DESIGN = 1440, MIN = 0.85, MAX = 1.0;
     var ID = 'nbedl-zoom-style';
     var st = doc.getElementById(ID);
     if (!st) { st = doc.createElement('style'); st.id = ID; doc.head.appendChild(st); }
@@ -477,8 +502,8 @@ if "exp_name" not in st.session_state:
     st.session_state.exp_name = ""
 if "config_vars" not in st.session_state:
     st.session_state.config_vars = []
-if "target_info" not in st.session_state:
-    st.session_state.target_info = {"name": "", "direction": "Maximize"}
+if "target_vars" not in st.session_state:
+    st.session_state.target_vars = []
 if "passive_vars" not in st.session_state:
     st.session_state.passive_vars = []
 if "df_data" not in st.session_state:
@@ -505,25 +530,142 @@ def process_robust_data(df, feature_cols, target_col):
         robust_y.append(np.mean(valid_y))
     return robust_X, robust_y
 
+def process_robust_data_multi(df, feature_cols, target_cols):
+    """process_robust_data와 같은 이상치(IQR) 처리를 목표 지표 여러 개에 동시에 적용한다.
+    같은 X(공정 조건)로 한 번만 그룹핑해서 목표별 강건 평균을 나란히 계산 — 다중목표 경로 전용."""
+    grouped = df.groupby(feature_cols)
+    robust_X, robust_Y = [], []
+    for name, group in grouped:
+        row_y = []
+        for t_col in target_cols:
+            y_vals = group[t_col].tolist()
+            if len(y_vals) >= 3:
+                q1, q3 = np.percentile(y_vals, [25, 75])
+                iqr = q3 - q1
+                lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+                valid_y = [y for y in y_vals if lower <= y <= upper]
+                if not valid_y: valid_y = y_vals
+            else:
+                valid_y = y_vals
+            row_y.append(np.mean(valid_y))
+        x_val = list(name) if isinstance(name, tuple) else [name]
+        robust_X.append(x_val)
+        robust_Y.append(row_y)
+    return robust_X, robust_Y
+
+def run_mobo(X_train, Y_train, config_vars, directions, n_candidates=3):
+    """다중목표 베이지안 최적화 (qNEHVI, BoTorch).
+
+    단일목표 EI는 "현재 최고값 대비 개선 기댓값"을 계산하는데, 이를 다차원으로 일반화한 것이
+    기대 하이퍼볼륨 개선량(EHVI)이다 — 목표가 1개면 하이퍼볼륨은 구간 길이가 되어 EI와 정확히
+    같은 식으로 축소되므로 원리는 동일하다(목표 1개는 skopt 경로를 그대로 쓴다). 여기서는
+    목표가 2개 이상일 때 파레토 프론트(하이퍼볼륨)를 가장 넓히는 다음 실험 후보를 찾는다.
+
+    Categorical 변수는 옵션 인덱스(0..k-1)로 연속 인코딩한 뒤 반올림해서 되돌린다 — 완전한
+    혼합공간 최적화(optimize_acqf_mixed)보다 단순하지만, 후보 3개를 뽑는 실험 추천 용도로는
+    충분한 근사다.
+
+    directions: target_cols와 같은 순서의 "Maximize"/"Minimize" 리스트.
+    반환: (candidates_raw, predicted_Y_raw) - 둘 다 원래 단위(부호 반전 없이).
+    """
+    torch.manual_seed(0)
+
+    specs = []  # (low, high, kind, options_or_None)
+    for var in config_vars:
+        if "Real" in var["Type"]:
+            specs.append((float(var["Min"]), float(var["Max"]), "real", None))
+        elif "Integer" in var["Type"]:
+            specs.append((float(var["Min"]), float(var["Max"]), "integer", None))
+        else:
+            opts = [o.strip() for o in var["Options"].split(",")]
+            specs.append((0.0, float(max(len(opts) - 1, 0)), "categorical", opts))
+
+    def encode_x(point):
+        enc = []
+        for val, (lo, hi, kind, opts) in zip(point, specs):
+            enc.append(float(opts.index(val)) if kind == "categorical" and val in opts else float(val) if kind != "categorical" else 0.0)
+        return enc
+
+    def decode_x(vec):
+        out = []
+        for val, (lo, hi, kind, opts) in zip(vec, specs):
+            if kind == "categorical":
+                idx = int(round(max(lo, min(hi, val))))
+                out.append(opts[idx])
+            elif kind == "integer":
+                out.append(int(round(val)))
+            else:
+                out.append(float(val))
+        return out
+
+    bounds_raw = torch.tensor([[s[0] for s in specs], [s[1] for s in specs]], dtype=torch.double)
+
+    X_raw = torch.tensor([encode_x(p) for p in X_train], dtype=torch.double)
+    Y_raw = torch.tensor(Y_train, dtype=torch.double)
+    # Minimize 목표는 부호를 반전해 전부 "최대화" 기준으로 통일한다 (BoTorch 관례).
+    sign = torch.tensor([1.0 if "Maximize" in d else -1.0 for d in directions], dtype=torch.double)
+    Y_adj = Y_raw * sign
+
+    X_norm = normalize(X_raw, bounds=bounds_raw)
+
+    models = [SingleTaskGP(X_norm, Y_adj[:, i:i + 1], outcome_transform=Standardize(m=1))
+              for i in range(Y_adj.shape[-1])]
+    model = ModelListGP(*models)
+    mll = SumMarginalLogLikelihood(model.likelihood, model)
+    fit_gpytorch_mll(mll)
+
+    y_range = (Y_adj.max(dim=0).values - Y_adj.min(dim=0).values).clamp(min=1e-6)
+    ref_point = Y_adj.min(dim=0).values - 0.1 * y_range
+
+    sampler = SobolQMCNormalSampler(sample_shape=torch.Size([128]))
+    acq = qNoisyExpectedHypervolumeImprovement(
+        model=model, ref_point=ref_point.tolist(), X_baseline=X_norm,
+        sampler=sampler, prune_baseline=True,
+    )
+
+    standard_bounds = torch.zeros(2, X_norm.shape[-1], dtype=torch.double)
+    standard_bounds[1] = 1.0
+    candidates_norm, _ = optimize_acqf(
+        acq_function=acq, bounds=standard_bounds, q=n_candidates,
+        num_restarts=10, raw_samples=256,
+        options={"batch_limit": 5, "maxiter": 200}, sequential=True,
+    )
+    candidates_raw_t = unnormalize(candidates_norm, bounds=bounds_raw)
+
+    with torch.no_grad():
+        posterior_mean_adj = model.posterior(candidates_norm).mean
+    posterior_mean_raw = posterior_mean_adj * sign
+
+    candidates_raw = [decode_x(row.tolist()) for row in candidates_raw_t]
+    predicted_Y = posterior_mean_raw.tolist()
+    return candidates_raw, predicted_Y
+
 @st.cache_data(show_spinner=False, max_entries=3)
-def build_excel_bytes(df, config_vars, meta_data):
+def build_excel_bytes(df, config_vars, target_vars, meta_data):
     """Excel 바이트 생성. 다운로드 버튼 때문에 매 리런마다 재생성되던 것을 캐시한다.
     (데이터가 바뀌면 자동으로 다시 생성된다)"""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, sheet_name='Data', index=False)
         pd.DataFrame(config_vars).to_excel(writer, sheet_name='Config_Vars', index=False)
+        pd.DataFrame(target_vars).to_excel(writer, sheet_name='Target_Vars', index=False)
         pd.DataFrame(meta_data).to_excel(writer, sheet_name='Config_Meta', index=False)
     return output.getvalue()
 
 def load_excel_data(uploaded_file):
     xls = pd.ExcelFile(uploaded_file, engine='openpyxl')
     df_meta = pd.read_excel(xls, 'Config_Meta')
-    st.session_state.target_info = {
-        "name": df_meta.iloc[0]['Target_Name'],
-        "direction": df_meta.iloc[0]['Direction']
-    }
-    
+
+    if 'Target_Vars' in xls.sheet_names:
+        target_list = pd.read_excel(xls, 'Target_Vars').to_dict('records')
+    else:
+        # 구버전 파일 호환: 목표 지표가 1개뿐이던 시절의 Config_Meta 형식
+        target_list = [{"Name": df_meta.iloc[0]['Target_Name'], "Direction": df_meta.iloc[0]['Direction']}]
+    for tv in target_list:
+        if "Old_Name" not in tv or pd.isna(tv["Old_Name"]):
+            tv["Old_Name"] = tv.get("Name", "")
+    st.session_state.target_vars = target_list
+
     if 'Exp_Name' in df_meta.columns and pd.notna(df_meta.iloc[0]['Exp_Name']):
         st.session_state.exp_name = str(df_meta.iloc[0]['Exp_Name'])
         
@@ -561,16 +703,28 @@ if st.session_state.app_mode == "Setup":
 
     with col_basic:
         with st.container(border=True):
-            colored_header(label="기본 프로젝트 설정", description="실험 이름과 최적화 목표 지표를 설정하세요.", color_name="orange-70")
+            colored_header(label="기본 프로젝트 설정", description="실험 이름과 환경 변수를 설정하세요.", color_name="orange-70")
             st.session_state.exp_name = st.text_input("📝 실험 프로젝트 이름", value=st.session_state.exp_name, placeholder="예: NBEDL_Experiment_01")
 
-            col_t1, col_t2, col_t3 = st.columns(3)
-            target_name = col_t1.text_input("목표 지표 이름", value=st.session_state.target_info["name"], placeholder="예: J_sc")
-            target_dir = col_t2.selectbox("최적화 방향", ["Maximize", "Minimize"])
-
             passive_val = ",".join(st.session_state.passive_vars) if st.session_state.passive_vars else ""
-            passive_input = col_t3.text_input("환경 변수 (쉼표 구분)", value=passive_val, placeholder="예: 온도 (°C), 습도 (%)")
-    
+            passive_input = st.text_input("환경 변수 (쉼표 구분)", value=passive_val, placeholder="예: 온도 (°C), 습도 (%)")
+
+    with st.container(border=True):
+        colored_header(label="🎯 최적화 목표 지표 설정", description="AI가 최적화할 목표 지표를 추가하세요. 여러 개 등록해두고, AI 계산 시 하나씩 선택해서 실행합니다.", color_name="orange-70")
+
+        for i, tv in enumerate(st.session_state.target_vars):
+            with st.container(border=True):
+                ct1, ct2 = st.columns([2, 1])
+                tv["Name"] = ct1.text_input(f"목표 지표 {i+1} 이름", value=tv.get("Name", ""), key=f"tname_{i}", placeholder="예: J_sc")
+                dir_options = ["Maximize", "Minimize"]
+                safe_dir = tv.get("Direction", "Maximize")
+                if safe_dir not in dir_options: safe_dir = "Maximize"
+                tv["Direction"] = ct2.selectbox("최적화 방향", dir_options, key=f"tdir_{i}", index=dir_options.index(safe_dir))
+
+        if st.button("➕ 목표 지표 블럭 추가", use_container_width=True):
+            st.session_state.target_vars.append({"Old_Name": "", "Name": "", "Direction": "Maximize"})
+            st.rerun()
+
     with st.container(border=True):
         colored_header(label="🔬 최적화 대상 공정 변수 입력", description="AI가 탐색할 공정 조건의 이름과 변수 범위를 지정하세요.", color_name="orange-70")
         
@@ -607,30 +761,30 @@ if st.session_state.app_mode == "Setup":
 
     st.write("")
     if st.button("🚀 실험 시작 및 대시보드 생성", type="primary", use_container_width=True):
-        if not target_name.strip():
-            st.error("목표 지표 이름을 입력해야 합니다.")
+        if not st.session_state.target_vars or any(not tv["Name"].strip() for tv in st.session_state.target_vars):
+            st.error("목표 지표를 최소 1개 이상, 이름을 채워서 등록해야 합니다.")
         elif not st.session_state.config_vars:
             st.error("최소 1개 이상의 공정 변수를 추가해야 합니다.")
         else:
-            st.session_state.target_info = {"name": target_name, "direction": target_dir}
             p_vars = [v.strip() for v in passive_input.split(",") if v.strip()]
             st.session_state.passive_vars = p_vars
-            
+
             if not st.session_state.df_data.empty:
                 rename_dict = {}
-                for var in st.session_state.config_vars:
+                for var in st.session_state.config_vars + st.session_state.target_vars:
                     old = var.get("Old_Name", "")
                     new = var["Name"]
                     if old and old != new and old in st.session_state.df_data.columns:
                         rename_dict[old] = new
                 if rename_dict:
                     st.session_state.df_data.rename(columns=rename_dict, inplace=True)
-            
-            for var in st.session_state.config_vars:
+
+            for var in st.session_state.config_vars + st.session_state.target_vars:
                 var["Old_Name"] = var["Name"]
-            
-            new_cols = ["학습_적용"] + p_vars + [v["Name"] for v in st.session_state.config_vars] + [target_name]
-            
+
+            new_cols = (["학습_적용"] + p_vars + [v["Name"] for v in st.session_state.config_vars]
+                        + [tv["Name"] for tv in st.session_state.target_vars])
+
             if not st.session_state.df_data.empty:
                 for col in new_cols:
                     if col not in st.session_state.df_data.columns:
@@ -645,8 +799,7 @@ if st.session_state.app_mode == "Setup":
 # [화면 B] 실험 진행 모드 (대시보드 탭 레이아웃)
 # ==========================================
 elif st.session_state.app_mode == "Dashboard":
-    t_name = st.session_state.target_info["name"]
-    t_dir = st.session_state.target_info["direction"]
+    target_names_all = [tv["Name"] for tv in st.session_state.target_vars]
     f_names = [v["Name"] for v in st.session_state.config_vars]
     
     display_exp_name = st.session_state.exp_name if st.session_state.exp_name.strip() else "NBEDL_Experiment"
@@ -657,11 +810,9 @@ elif st.session_state.app_mode == "Dashboard":
         st.header("📂 데이터 관리 패널")
         meta_data = {
             "Exp_Name": [display_exp_name],
-            "Target_Name": [t_name],
-            "Direction": [t_dir],
             "Passive_Vars": [",".join(st.session_state.passive_vars)]
         }
-        excel_bytes = build_excel_bytes(st.session_state.df_data, st.session_state.config_vars, meta_data)
+        excel_bytes = build_excel_bytes(st.session_state.df_data, st.session_state.config_vars, st.session_state.target_vars, meta_data)
         file_name_export = f"{display_exp_name}_Data.xlsx"
 
         st.download_button(label="📥 최신 데이터 Excel 다운로드", data=excel_bytes, file_name=file_name_export, type="primary", use_container_width=True)
@@ -679,7 +830,7 @@ elif st.session_state.app_mode == "Dashboard":
         with st.container(border=True):
             colored_header(label="새로운 스플릿 실험 결과 입력", description="값을 모두 적은 후 하단 '데이터 추가' 버튼을 클릭하세요.", color_name="orange-70")
             with st.form("input_form", clear_on_submit=True):
-                cols = st.columns(len(st.session_state.passive_vars) + len(st.session_state.config_vars) + 1)
+                cols = st.columns(len(st.session_state.passive_vars) + len(st.session_state.config_vars) + len(target_names_all))
                 new_row = {"학습_적용": True}
                 idx = 0
                 
@@ -705,11 +856,13 @@ elif st.session_state.app_mode == "Dashboard":
                             new_row[var["Name"]] = st.selectbox(disp_name, opts, label_visibility="collapsed", key=f"input_{var['Name']}")
                     idx += 1
                     
-                with cols[idx]:
-                    st.markdown(label_style.format(f"결과값 ({t_name})"), unsafe_allow_html=True)
-                    new_row[t_name] = st.number_input(t_name, value=0.0, label_visibility="collapsed", key="input_target")
-                
-                st.write("") 
+                for t_var_name in target_names_all:
+                    with cols[idx]:
+                        st.markdown(label_style.format(f"결과값 ({t_var_name})"), unsafe_allow_html=True)
+                        new_row[t_var_name] = st.number_input(t_var_name, value=0.0, label_visibility="collapsed", key=f"input_target_{t_var_name}")
+                    idx += 1
+
+                st.write("")
                 submitted = st.form_submit_button("➕ 데이터 추가", type="primary", use_container_width=True)
                 if submitted:
                     st.session_state.df_data = pd.concat([st.session_state.df_data, pd.DataFrame([new_row])], ignore_index=True)
@@ -735,63 +888,148 @@ elif st.session_state.app_mode == "Dashboard":
             )
 
     with tab3:
-        valid_df = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
-        c1, c2 = st.columns([1.2, 1])
+        if not target_names_all:
+            st.warning("등록된 목표 지표가 없습니다. 사이드바의 '환경 설정으로 돌아가기'에서 목표 지표를 추가하세요.")
 
-        with c1:
-            with st.container(border=True):
-                colored_header(label=f"📈 최적화 경향 곡선", description=f"실험이 진행됨에 따라 타겟 지표({t_name})의 수렴 상태를 보여줍니다.", color_name="green-70")
-                if len(valid_df) > 0:
-                    chart_data = valid_df[t_name].expanding().max() if "Maximize" in t_dir else valid_df[t_name].expanding().min()
-                    st.line_chart(chart_data, height=350)
-                else:
-                    st.info("분석용 데이터가 입력되지 않았습니다.")
+        elif len(target_names_all) == 1:
+            # ---- 목표 지표 1개: 기존 단일목표 경로 (skopt GP + EI) ----
+            t_name = target_names_all[0]
+            t_dir = st.session_state.target_vars[0]["Direction"]
 
-        with c2:
-            with st.container(border=True):
-                colored_header(label="🤖 베이지안 추천 차기 조건", description="가우시안 프로세스 알고리즘에 기반하여 제안된 3가지 최적 조건 셋입니다.", color_name="orange-70")
-                if st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
-                    if len(valid_df) < 2:
-                        st.warning("정밀 분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
+            valid_df = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
+            c1, c2 = st.columns([1.2, 1])
+
+            with c1:
+                with st.container(border=True):
+                    colored_header(label=f"📈 최적화 경향 곡선", description=f"실험이 진행됨에 따라 타겟 지표({t_name})의 수렴 상태를 보여줍니다.", color_name="green-70")
+                    if len(valid_df) > 0:
+                        chart_data = valid_df[t_name].expanding().max() if "Maximize" in t_dir else valid_df[t_name].expanding().min()
+                        st.line_chart(chart_data, height=350)
                     else:
-                        with st.spinner("알고리즘 연산 중..."):
-                            X_train, y_train = process_robust_data(valid_df, f_names, t_name)
-                            ai_spaces = []
-                            for var in st.session_state.config_vars:
-                                if "Real" in var["Type"]: ai_spaces.append(Real(var["Min"], var["Max"], name=var["Name"]))
-                                elif "Integer" in var["Type"]: ai_spaces.append(Integer(var["Min"], var["Max"], name=var["Name"]))
-                                elif "Categorical" in var["Type"]: ai_spaces.append(Categorical([o.strip() for o in var["Options"].split(",")], name=var["Name"]))
-                            
-                            y_train_fit = [-val for val in y_train] if "Maximize" in t_dir else y_train
-                                
-                            opt = Optimizer(dimensions=ai_spaces, base_estimator="GP", acq_func="EI", random_state=None)
-                            
-                            X_train_safe = []
-                            y_train_fit_safe = []
-                            for i, point in enumerate(X_train):
-                                if all(ai_spaces[j].low <= val <= ai_spaces[j].high for j, val in enumerate(point)):
-                                    X_train_safe.append(point)
-                                    y_train_fit_safe.append(y_train_fit[i])
-                            
-                            opt.tell(X_train_safe, y_train_fit_safe)
-                            next_points = opt.ask(n_points=3)
-                        
-                        if "prev_next_points" in st.session_state and st.session_state.prev_next_points == next_points:
-                            st.info("💡 **AI 수렴 상태 판단:** 현재 입력된 데이터 풀 안에서 해당 지점이 가장 최적의 공정 조건 범위로 강력하게 매핑되었습니다.")
-                        
-                        st.session_state.prev_next_points = next_points
-                            
-                        for i, points in enumerate(next_points):
-                            with st.container(border=True): 
-                                st.markdown(f"<h5 style='margin:0; font-weight: 800; color: #ed542b;'>실험 후보 {i+1}</h5>", unsafe_allow_html=True)
-                                st.divider()
-                                cols_rec = st.columns(len(f_names))
-                                for idx, (var, val) in enumerate(zip(st.session_state.config_vars, points)):
-                                    unit_str = f" {var['Unit']}" if var.get("Unit") else ""
-                                    cols_rec[idx].metric(label=var["Name"], value=f"{round(val, 3)}{unit_str}")
-                                style_metric_cards(background_color="transparent", border_left_color="#ed542b", border_color="transparent", box_shadow=False)
-                        
-                        with st.expander("🔍 AI 연산 피팅 로그 데이터"):
-                            debug_df = pd.DataFrame(X_train, columns=f_names)
-                            debug_df[t_name] = y_train
-                            st.dataframe(debug_df, use_container_width=True)
+                        st.info("분석용 데이터가 입력되지 않았습니다.")
+
+            with c2:
+                with st.container(border=True):
+                    colored_header(label="🤖 베이지안 추천 차기 조건", description="가우시안 프로세스 알고리즘에 기반하여 제안된 3가지 최적 조건 셋입니다.", color_name="orange-70")
+                    if st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
+                        if len(valid_df) < 2:
+                            st.warning("정밀 분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
+                        else:
+                            with st.spinner("알고리즘 연산 중..."):
+                                X_train, y_train = process_robust_data(valid_df, f_names, t_name)
+                                ai_spaces = []
+                                for var in st.session_state.config_vars:
+                                    if "Real" in var["Type"]: ai_spaces.append(Real(var["Min"], var["Max"], name=var["Name"]))
+                                    elif "Integer" in var["Type"]: ai_spaces.append(Integer(var["Min"], var["Max"], name=var["Name"]))
+                                    elif "Categorical" in var["Type"]: ai_spaces.append(Categorical([o.strip() for o in var["Options"].split(",")], name=var["Name"]))
+
+                                y_train_fit = [-val for val in y_train] if "Maximize" in t_dir else y_train
+
+                                X_train_safe = []
+                                y_train_fit_safe = []
+                                for i, point in enumerate(X_train):
+                                    if all(ai_spaces[j].low <= val <= ai_spaces[j].high for j, val in enumerate(point)):
+                                        X_train_safe.append(point)
+                                        y_train_fit_safe.append(y_train_fit[i])
+
+                                # 유효 데이터가 전부 공정 변수 설정 범위(Min~Max) 밖이면 학습 데이터가
+                                # 텅 비어 skopt.Optimizer.tell()이 내부에서 np.argmin([])으로 죽는다 —
+                                # 계산 전에 걸러서 사용자에게 원인을 알려준다.
+                                next_points = None
+                                if X_train_safe:
+                                    opt = Optimizer(dimensions=ai_spaces, base_estimator="GP", acq_func="EI", random_state=None)
+                                    opt.tell(X_train_safe, y_train_fit_safe)
+                                    next_points = opt.ask(n_points=3)
+
+                            if next_points is None:
+                                st.error("등록된 유효 데이터가 모두 공정 변수의 설정 범위(최소~최대값) 밖에 있어 계산할 수 없습니다. 환경 설정에서 범위를 확인하거나 데이터를 다시 확인하세요.")
+                            else:
+                                # 목표 지표별로 직전 결과를 따로 기억한다 (다른 지표로 전환 후 재계산했을 때
+                                # 이전 지표의 결과와 잘못 비교되지 않도록).
+                                if "prev_next_points_by_target" not in st.session_state:
+                                    st.session_state.prev_next_points_by_target = {}
+                                if st.session_state.prev_next_points_by_target.get(t_name) == next_points:
+                                    st.info("💡 **AI 수렴 상태 판단:** 현재 입력된 데이터 풀 안에서 해당 지점이 가장 최적의 공정 조건 범위로 강력하게 매핑되었습니다.")
+
+                                st.session_state.prev_next_points_by_target[t_name] = next_points
+
+                                for i, points in enumerate(next_points):
+                                    with st.container(border=True):
+                                        st.markdown(f"<h5 style='margin:0; font-weight: 800; color: #ed542b;'>실험 후보 {i+1}</h5>", unsafe_allow_html=True)
+                                        st.divider()
+                                        cols_rec = st.columns(len(f_names))
+                                        for idx, (var, val) in enumerate(zip(st.session_state.config_vars, points)):
+                                            unit_str = f" {var['Unit']}" if var.get("Unit") else ""
+                                            cols_rec[idx].metric(label=var["Name"], value=f"{round(val, 3)}{unit_str}")
+                                        style_metric_cards(background_color="transparent", border_left_color="#ed542b", border_color="transparent", box_shadow=False)
+
+                                with st.expander("🔍 AI 연산 피팅 로그 데이터"):
+                                    debug_df = pd.DataFrame(X_train, columns=f_names)
+                                    debug_df[t_name] = y_train
+                                    st.dataframe(debug_df, use_container_width=True)
+
+        else:
+            # ---- 목표 지표 2개 이상: 다중목표 베이지안 최적화 (MOBO, qNEHVI/BoTorch) ----
+            # 원리는 단일목표 EI와 동일한 "기대 개선량" 개념을 하이퍼볼륨으로 일반화한 것뿐이라
+            # (목표 1개면 EI로 정확히 축소됨) 위 skopt 경로와 별개 알고리즘이 아니라 자연스러운
+            # 확장이다. 다만 여러 목표를 동시에 보므로 "하나의 목표를 골라 계산"하는 개념 자체가
+            # 없어 위의 목표 선택 UI는 여기선 쓰지 않는다.
+            target_labels = ", ".join(f"{tv['Name']}({tv['Direction']})" for tv in st.session_state.target_vars)
+            st.info(f"🎯 다중 목표 동시 최적화 (파레토 최적) — 등록된 {len(target_names_all)}개 지표를 함께 고려합니다: {target_labels}")
+
+            valid_df = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
+            c1, c2 = st.columns([1.2, 1])
+
+            with c1:
+                with st.container(border=True):
+                    colored_header(label="📈 목표별 수렴 곡선", description="각 목표 지표가 실험이 진행됨에 따라 어떻게 수렴하는지 보여줍니다.", color_name="green-70")
+                    if len(valid_df) > 0:
+                        for tv in st.session_state.target_vars:
+                            tn, td = tv["Name"], tv["Direction"]
+                            if tn in valid_df.columns:
+                                cdata = valid_df[tn].expanding().max() if "Maximize" in td else valid_df[tn].expanding().min()
+                                st.caption(f"{tn} ({td})")
+                                st.line_chart(cdata, height=160)
+                    else:
+                        st.info("분석용 데이터가 입력되지 않았습니다.")
+
+            with c2:
+                with st.container(border=True):
+                    colored_header(label="🤖 파레토 최적 후보 (MOBO)", description="qNEHVI 알고리즘으로 여러 목표를 동시에 개선할 다음 실험 후보를 제안합니다.", color_name="orange-70")
+                    if not _BOTORCH_AVAILABLE:
+                        st.error("다중 목표 최적화에는 `botorch` 패키지가 필요합니다. `pip install botorch`로 설치한 뒤 앱을 다시 시작하세요.")
+                    elif st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
+                        if len(valid_df) < 2:
+                            st.warning("정밀 분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
+                        else:
+                            with st.spinner("다중목표 알고리즘 연산 중..."):
+                                X_train, Y_train = process_robust_data_multi(valid_df, f_names, target_names_all)
+                                directions = [tv["Direction"] for tv in st.session_state.target_vars]
+                                mobo_error = None
+                                try:
+                                    candidates, predicted_Y = run_mobo(
+                                        X_train, Y_train, st.session_state.config_vars, directions, n_candidates=3
+                                    )
+                                except Exception as e:
+                                    candidates, predicted_Y = None, None
+                                    mobo_error = str(e)
+
+                            if mobo_error:
+                                st.error(f"다중목표 계산 중 오류가 발생했습니다: {mobo_error}")
+                            else:
+                                if st.session_state.get("prev_mobo_points") == candidates:
+                                    st.info("💡 **AI 수렴 상태 판단:** 현재 데이터 풀 안에서 파레토 최적 후보가 안정적으로 수렴했습니다.")
+                                st.session_state.prev_mobo_points = candidates
+
+                                for i, (point, pred) in enumerate(zip(candidates, predicted_Y)):
+                                    with st.container(border=True):
+                                        st.markdown(f"<h5 style='margin:0; font-weight: 800; color: #ed542b;'>실험 후보 {i+1}</h5>", unsafe_allow_html=True)
+                                        st.divider()
+                                        cols_rec = st.columns(len(f_names))
+                                        for idx, (var, val) in enumerate(zip(st.session_state.config_vars, point)):
+                                            unit_str = f" {var['Unit']}" if var.get("Unit") else ""
+                                            disp_val = f"{round(val, 3)}{unit_str}" if isinstance(val, float) else f"{val}{unit_str}"
+                                            cols_rec[idx].metric(label=var["Name"], value=disp_val)
+                                        style_metric_cards(background_color="transparent", border_left_color="#ed542b", border_color="transparent", box_shadow=False)
+                                        pred_str = " · ".join(f"{tn} ≈ {p:.3g}" for tn, p in zip(target_names_all, pred))
+                                        st.caption(f"예측 목표값: {pred_str}")
