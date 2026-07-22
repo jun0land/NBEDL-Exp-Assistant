@@ -104,6 +104,14 @@ html, body, p, h1, h2, h3, h4, h5, h6, label, span, div {{ font-family: 'Pretend
     background: transparent !important;
 }}
 
+/* 큰 모니터에서 블럭이 화면 끝까지 좌우로 늘어나면 한 줄이 너무 길어져 가시성이 떨어진다.
+   콘텐츠 폭을 zoom 기준 디자인 폭(1440px)으로 제한하고 가운데 정렬한다. */
+[data-testid="stMain"] .block-container {{
+    max-width: 1440px !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+}}
+
 /* ========================================================================= */
 /* 진정한 Liquid Glass 블럭 (사용자님 피드백 블러값 그대로 유지) */
 /* ========================================================================= */
@@ -689,17 +697,19 @@ def load_excel_data(uploaded_file):
 # [화면 A] 실험 세팅 모드 (Setup)
 # ==========================================
 if st.session_state.app_mode == "Setup":
-    st.markdown(f'<div class="title-glass-container">{logo_html}<h2>NBEDL AI 기반 공정 최적화 시스템</h2></div>', unsafe_allow_html=True)
-    
-    col_load, col_basic = st.columns([1, 1.8], gap="medium")
+    col_title, col_upload = st.columns([2.6, 1.2], gap="medium", vertical_alignment="center")
 
-    with col_load:
-        with st.container(border=True):
-            st.markdown("<h5 style='font-weight: 800;'>기존 실험 데이터 불러오기</h5>", unsafe_allow_html=True)
+    with col_title:
+        st.markdown(f'<div class="title-glass-container">{logo_html}<h2>NBEDL AI 기반 공정 최적화 시스템</h2></div>', unsafe_allow_html=True)
+
+    with col_upload:
+        with st.popover("📂 기존 실험 데이터 불러오기", use_container_width=True):
             uploaded_file = st.file_uploader("엑셀(xlsx) 파일을 업로드하면 설정이 자동으로 채워집니다.", type=["xlsx"])
             if uploaded_file:
                 load_excel_data(uploaded_file)
                 st.rerun()
+
+    col_basic, col_target = st.columns(2, gap="medium")
 
     with col_basic:
         with st.container(border=True):
@@ -709,21 +719,22 @@ if st.session_state.app_mode == "Setup":
             passive_val = ",".join(st.session_state.passive_vars) if st.session_state.passive_vars else ""
             passive_input = st.text_input("환경 변수 (쉼표 구분)", value=passive_val, placeholder="예: 온도 (°C), 습도 (%)")
 
-    with st.container(border=True):
-        colored_header(label="🎯 최적화 목표 지표 설정", description="AI가 최적화할 목표 지표를 추가하세요. 여러 개 등록해두고, AI 계산 시 하나씩 선택해서 실행합니다.", color_name="orange-70")
+    with col_target:
+        with st.container(border=True):
+            colored_header(label="🎯 최적화 목표 지표 설정", description="목표 지표를 여러 개 등록하면, 1개일 땐 단일목표 최적화를, 2개 이상이면 파레토 최적(MOBO) 탐색을 자동으로 수행합니다.", color_name="orange-70")
 
-        for i, tv in enumerate(st.session_state.target_vars):
-            with st.container(border=True):
-                ct1, ct2 = st.columns([2, 1])
-                tv["Name"] = ct1.text_input(f"목표 지표 {i+1} 이름", value=tv.get("Name", ""), key=f"tname_{i}", placeholder="예: J_sc")
-                dir_options = ["Maximize", "Minimize"]
-                safe_dir = tv.get("Direction", "Maximize")
-                if safe_dir not in dir_options: safe_dir = "Maximize"
-                tv["Direction"] = ct2.selectbox("최적화 방향", dir_options, key=f"tdir_{i}", index=dir_options.index(safe_dir))
+            for i, tv in enumerate(st.session_state.target_vars):
+                with st.container(border=True):
+                    ct1, ct2 = st.columns([2, 1])
+                    tv["Name"] = ct1.text_input(f"목표 지표 {i+1} 이름", value=tv.get("Name", ""), key=f"tname_{i}", placeholder="예: J_sc")
+                    dir_options = ["Maximize", "Minimize"]
+                    safe_dir = tv.get("Direction", "Maximize")
+                    if safe_dir not in dir_options: safe_dir = "Maximize"
+                    tv["Direction"] = ct2.selectbox("최적화 방향", dir_options, key=f"tdir_{i}", index=dir_options.index(safe_dir))
 
-        if st.button("➕ 목표 지표 블럭 추가", use_container_width=True):
-            st.session_state.target_vars.append({"Old_Name": "", "Name": "", "Direction": "Maximize"})
-            st.rerun()
+            if st.button("➕ 목표 지표 블럭 추가", use_container_width=True):
+                st.session_state.target_vars.append({"Old_Name": "", "Name": "", "Direction": "Maximize"})
+                st.rerun()
 
     with st.container(border=True):
         colored_header(label="🔬 최적화 대상 공정 변수 입력", description="AI가 탐색할 공정 조건의 이름과 변수 범위를 지정하세요.", color_name="orange-70")
