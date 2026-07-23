@@ -837,6 +837,16 @@ elif st.session_state.app_mode == "Dashboard":
     if "학습_적용" in st.session_state.df_data.columns:
         st.session_state.df_data["학습_적용"] = coerce_bool_col(st.session_state.df_data["학습_적용"])
 
+    # Data 시트(실제 데이터 테이블)의 컬럼 순서는 최초 생성 시점에 고정되어 이후 절대
+    # 바뀌지 않는다. 반면 target_vars(=Target_Vars 시트)는 엑셀에서 직접 정렬/편집하면
+    # 그 순서가 어긋날 수 있다 — 화면 표시는 항상 실제 데이터 컬럼 순서를 따르도록,
+    # target_vars를 df_data.columns 등장 순서에 맞춰 정렬한다 (아직 데이터에 반영 안 된
+    # 신규 목표는 뒤로 보낸다).
+    _data_cols = list(st.session_state.df_data.columns)
+    st.session_state.target_vars.sort(
+        key=lambda tv: _data_cols.index(tv["Name"]) if tv["Name"] in _data_cols else len(_data_cols)
+    )
+
     target_names_all = [tv["Name"] for tv in st.session_state.target_vars]
     f_names = [v["Name"] for v in st.session_state.config_vars]
     
