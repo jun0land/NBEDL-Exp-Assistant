@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import functools
+import json
 import os
 
 import numpy as np
@@ -285,6 +286,11 @@ def _export_image_button(fig, *, fmt, transparent, filename, label, btn_id):
     # 내보낸 이미지에 Myriad Pro 를 고정하려면 iframe 안에서도 폰트가 로드돼 있어야 한다
     # (iframe 은 앱 CSS 를 상속하지 않으므로 base64 로 임베드하고, downloadImage 전에 로드 완료를 기다린다).
     fontface = _fontface_css(embed=True)
+    # filename 은 사용자가 입력한 공정 변수명에서 온다 — JS 문자열에 그대로 넣으면 따옴표/특수문자로
+    # 내보내기가 깨지거나(예: 변수명에 ') XSS 가 될 수 있으므로 json.dumps 로 안전한 JS 리터럴로 만든다.
+    fmt_js = json.dumps(fmt)
+    filename_js = json.dumps(filename)
+    btn_id_js = json.dumps(btn_id)
     html = f"""
     <html>
     <head>
@@ -294,7 +300,7 @@ def _export_image_button(fig, *, fmt, transparent, filename, label, btn_id):
     <body style="margin:0; padding:0; background:transparent; overflow:hidden;">
     <button id="{btn_id}" style="{_BTN_STYLE}" onmouseover="{_BTN_HOVER}" onmouseout="{_BTN_LEAVE}">{label}</button>
     <script>
-    document.getElementById('{btn_id}').addEventListener('click', function() {{
+    document.getElementById({btn_id_js}).addEventListener('click', function() {{
         if (typeof Plotly === 'undefined') {{
             alert('이미지 생성 엔진 로딩 중입니다. 1~2초 뒤 다시 클릭해주세요.');
             return;
@@ -305,7 +311,7 @@ def _export_image_button(fig, *, fmt, transparent, filename, label, btn_id):
         document.body.appendChild(d);
         var figData = {fig_json};
         var doDownload = function() {{
-            Plotly.downloadImage(d, {{format: '{fmt}', width: 960, height: 768, scale: 3, filename: '{filename}'}}).then(function() {{
+            Plotly.downloadImage(d, {{format: {fmt_js}, width: 960, height: 768, scale: 3, filename: {filename_js}}}).then(function() {{
                 document.body.removeChild(d);
             }});
         }};
