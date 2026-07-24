@@ -9,6 +9,7 @@ from skopt.space import Real, Integer, Categorical
 import streamlit.components.v1 as components
 from streamlit_extras.colored_header import colored_header
 from streamlit_extras.metric_cards import style_metric_cards
+from origin_charts import render_variable_charts, render_excluded_expander
 
 # 다중 목표(2개 이상) 최적화에만 쓰는 BoTorch는 무겁고(torch 포함) 목표 1개짜리 사용자에게는
 # 불필요하다. import를 감싸서, 미설치 상태에서도 단일 목표 경로(skopt)는 그대로 동작하고
@@ -310,7 +311,8 @@ MANUAL_HTML = """
     <li><b>자동 저장이 안 됩니다.</b> 데이터는 브라우저 세션에만 있어, 새로고침하거나 창을 닫으면 사라질 수 있습니다. <b>작업 후 반드시 Excel로 다운로드</b>하세요.</li>
     <li><b>"모든 데이터 초기화"는 되돌릴 수 없습니다.</b> 초기화 전에 꼭 저장하세요.</li>
     <li><b>데이터가 많을수록 AI 추천이 정확</b>해집니다. 초반엔 다양한 조건을 폭넓게 시도해 보세요.</li>
-    <li>같은 조건을 여러 번 반복 측정하면, AI가 <b>이상치를 자동으로 걸러</b> 평균을 사용합니다.</li>
+    <li><b>이상치 자동 제거:</b> <u>완전히 같은 공정 조건</u>을 <b>3번 이상 반복 측정</b>하면, AI가 그 그룹 안에서 유난히 튀는 값(IQR 1.5배 기준)을 자동으로 걸러내고 나머지의 평균을 사용합니다. 조건이 조금이라도 다르면 다른 그룹이라 이 판정이 되지 않습니다. 반복이 <b>2개 이하면 판정을 하지 않고</b>, 통계적으로는 <b>5번 이상</b> 반복해야 이상치가 잘 잡힙니다.</li>
+    <li>어떤 데이터가 왜 빠졌는지는 <b>AI 최적화 대시보드 탭의 "🚫 제외된 데이터" 칸</b>에서 사유별로 확인할 수 있습니다.</li>
   </ul>
 </div>
 """
@@ -968,6 +970,7 @@ elif st.session_state.app_mode == "Dashboard":
             with c2:
                 with st.container(border=True):
                     colored_header(label="🤖 베이지안 추천 차기 조건", description="가우시안 프로세스 알고리즘에 기반하여 제안된 3가지 최적 조건 셋입니다.", color_name="orange-70")
+                    render_excluded_expander(st.session_state.df_data, f_names, [t_name], st.session_state.config_vars, include_range=True, key="single")
                     if st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
                         if len(valid_df) < 2:
                             st.warning("정밀 분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
@@ -1054,6 +1057,7 @@ elif st.session_state.app_mode == "Dashboard":
             with c2:
                 with st.container(border=True):
                     colored_header(label="🤖 파레토 최적 후보 (MOBO)", description="qNEHVI 알고리즘으로 여러 목표를 동시에 개선할 다음 실험 후보를 제안합니다.", color_name="orange-70")
+                    render_excluded_expander(st.session_state.df_data, f_names, target_names_all, st.session_state.config_vars, include_range=False, key="multi")
                     if not _BOTORCH_AVAILABLE:
                         st.error("다중 목표 최적화에는 `botorch` 패키지가 필요합니다. `pip install botorch`로 설치한 뒤 앱을 다시 시작하세요.")
                     elif st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
@@ -1094,3 +1098,11 @@ elif st.session_state.app_mode == "Dashboard":
                                             for tv, p in zip(st.session_state.target_vars, pred)
                                         )
                                         st.caption(f"예측 목표값: {pred_str}")
+        # ---- 공정 변수별 목표 지표 분포 (Origin 스타일) ----
+        st.divider()
+        with st.container(border=True):
+            colored_header(label="📊 공정 변수별 목표 지표 분포 (Origin 스타일)",
+                           description="공정 변수 1개당 그래프 1개. X축은 공정 변수 값, Y축은 목표 지표를 0~1로 정규화해 겹쳐 보여줍니다. (학습 적용 데이터만)",
+                           color_name="blue-70")
+            valid_df_charts = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
+            render_variable_charts(valid_df_charts, st.session_state.config_vars, st.session_state.target_vars, key_prefix="vardist")
