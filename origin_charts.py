@@ -81,6 +81,17 @@ def origin_color(i: int) -> str:
     return _DEFAULT_TRACE_COLORS[i % len(_DEFAULT_TRACE_COLORS)]
 
 
+# 목표 지표별로 서로 다른 마커 모양을 순환시킨다 (전부 원형이면 겹칠 때 구분이 안 됨).
+_MARKER_SYMBOLS = [
+    "circle", "square", "diamond", "triangle-up", "cross",
+    "x", "triangle-down", "star", "hexagon", "pentagon",
+]
+
+
+def marker_symbol(i: int) -> str:
+    return _MARKER_SYMBOLS[i % len(_MARKER_SYMBOLS)]
+
+
 def _normalize(series) -> pd.Series:
     """0~1 정규화. 상수 컬럼(max==min) 또는 데이터 없음은 0.5."""
     s = pd.to_numeric(series, errors="coerce")
@@ -212,16 +223,39 @@ def build_variable_figure(df, var, target_vars, style):
         xs = x_raw.values[order]
         color = style["colors"].get(tname, origin_color(i))
         unit = f" {tv['Unit']}" if tv.get("Unit") else ""
-        fig.add_trace(go.Scatter(
-            x=xs, y=y_norm,
-            mode="lines+markers" if style["show_markers"] else "lines",
-            name=tname,
-            line=dict(color=color, width=float(style["line_width"])),
-            marker=dict(color=color, size=8),
-            customdata=y_orig,
-            hovertemplate=(f"{var_name}: %{{x}}<br>{tname}: %{{customdata:.6g}}{unit}"
-                           f"<br>정규화: %{{y:.3f}}<extra></extra>"),
-        ))
+
+        # 포인트만 찍는다 (점끼리 잇지 않음) — 목표별로 마커 모양도 다르게 순환.
+        if style["show_markers"]:
+            fig.add_trace(go.Scatter(
+                x=xs, y=y_norm,
+                mode="markers",
+                name=tname,
+                marker=dict(color=color, size=10, symbol=marker_symbol(i)),
+                customdata=y_orig,
+                hovertemplate=(f"{var_name}: %{{x}}<br>{tname}: %{{customdata:.6g}}{unit}"
+                               f"<br>정규화: %{{y:.3f}}<extra></extra>"),
+                legendgroup=tname,
+            ))
+
+        # 추세선(선형 회귀)은 포인트와 별개 트레이스로, 기본 40% 투명도로 그린다.
+        # 범주형 x축은 회귀선이 의미가 없어 건너뛴다.
+        if style.get("show_trendline", True) and not is_cat:
+            xs_num = pd.to_numeric(pd.Series(xs), errors="coerce").values
+            fit_mask = np.isfinite(xs_num) & np.isfinite(y_norm)
+            if fit_mask.sum() >= 2 and np.ptp(xs_num[fit_mask]) > 0:
+                slope, intercept = np.polyfit(xs_num[fit_mask], y_norm[fit_mask], 1)
+                x_line = np.array([xs_num[fit_mask].min(), xs_num[fit_mask].max()])
+                y_line = slope * x_line + intercept
+                fig.add_trace(go.Scatter(
+                    x=x_line, y=y_line,
+                    mode="lines",
+                    name=f"{tname} 추세선",
+                    line=dict(color=color, width=float(style["line_width"])),
+                    opacity=float(style.get("trendline_opacity", 0.4)),
+                    legendgroup=tname,
+                    showlegend=False,
+                    hoverinfo="skip",
+                ))
 
     tick_font = dict(family=FONT_FAMILY, size=style["tick_font_size"], color="black")
     title_font = dict(family=FONT_FAMILY, size=style["title_font_size"], color="black")
@@ -365,8 +399,11 @@ def render_variable_charts(df_valid, config_vars, target_vars, key_prefix="vardi
         cS = st.columns(4)
         title_fs = cS[0].number_input("제목 글씨 크기", 6, 50, 30, key=f"{key_prefix}_title_fs")
         tick_fs = cS[1].number_input("눈금 글씨 크기", 6, 50, 30, key=f"{key_prefix}_tick_fs")
-        line_w = cS[2].number_input("선 두께", 0.5, 10.0, 2.0, step=0.5, key=f"{key_prefix}_lw")
-        show_markers = cS[3].checkbox("마커 표시", True, key=f"{key_prefix}_mk")
+        line_w = cS[2].number_input("추세선 두께", 0.5, 10.0, 2.0, step=0.5, key=f"{key_prefix}_lw")
+        show_markers = cS[3].checkbox("포인트 표시", True, key=f"{key_prefix}_mk")
+        cT = st.columns(2)
+        show_trendline = cT[0].checkbox("추세선 표시", True, key=f"{key_prefix}_trend")
+        trendline_opacity = cT[1].slider("추세선 투명도", 0, 100, 40, key=f"{key_prefix}_trend_op") / 100.0
         y_title = st.text_input("Y축 제목 (공통)", "정규화 목표값 (0–1)", key=f"{key_prefix}_ytitle")
         st.caption("목표별 선 색상 (Origin 팔레트 기본)")
         ccols = st.columns(min(len(targets), 6))
@@ -380,7 +417,8 @@ def render_variable_charts(df_valid, config_vars, target_vars, key_prefix="vardi
         unit = f" ({var['Unit']})" if var.get("Unit") else ""
         x_title = st.text_input(f"X축 제목 — {vname}", f"{vname}{unit}", key=f"{key_prefix}_xt_{vi}")
         style = dict(x_title=x_title, y_title=y_title, title_font_size=title_fs,
-                     tick_font_size=tick_fs, line_width=line_w, show_markers=show_markers, colors=colors)
+                     tick_font_size=tick_fs, line_width=line_w, show_markers=show_markers, colors=colors,
+                     show_trendline=show_trendline, trendline_opacity=trendline_opacity)
         fig = build_variable_figure(df_valid, var, targets, style)
         st.plotly_chart(fig, width="content", config={
             "displaylogo": False, "responsive": False,
