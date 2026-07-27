@@ -425,6 +425,14 @@ def render_variable_charts(df_valid, config_vars, target_vars, key_prefix="vardi
                                           help="1=선형, 2 이상은 다항 회귀 곡선")
         normalize = cT[3].checkbox("Y값 정규화 (0~1)", True, key=f"{key_prefix}_norm",
                                    help="끄면 목표별 원본 단위 그대로 표시합니다 (목표마다 스케일이 달라도 그대로 겹쳐 그림).")
+
+        st.caption("X축 제목 (그래프별)")
+        x_titles = {}
+        for vi, var in enumerate(cvars):
+            vname = var["Name"]
+            unit = f" ({var['Unit']})" if var.get("Unit") else ""
+            x_titles[vname] = st.text_input(f"X축 제목 — {vname}", f"{vname}{unit}", key=f"{key_prefix}_xt_{vi}")
+
         default_y_title = "정규화 목표값 (0–1)" if normalize else "목표값 (원본 단위)"
         y_title = st.text_input("Y축 제목 (공통)", default_y_title, key=f"{key_prefix}_ytitle")
         st.caption("목표별 선 색상 (Origin 팔레트 기본)")
@@ -436,9 +444,7 @@ def render_variable_charts(df_valid, config_vars, target_vars, key_prefix="vardi
 
     for vi, var in enumerate(cvars):
         vname = var["Name"]
-        unit = f" ({var['Unit']})" if var.get("Unit") else ""
-        x_title = st.text_input(f"X축 제목 — {vname}", f"{vname}{unit}", key=f"{key_prefix}_xt_{vi}")
-        style = dict(x_title=x_title, y_title=y_title, title_font_size=title_fs,
+        style = dict(x_title=x_titles[vname], y_title=y_title, title_font_size=title_fs,
                      tick_font_size=tick_fs, line_width=line_w, show_markers=show_markers, colors=colors,
                      show_trendline=show_trendline, trendline_opacity=trendline_opacity,
                      trend_degree=trend_degree, normalize=normalize)
