@@ -205,13 +205,16 @@ def build_variable_figure(df, var, target_vars, style):
     df          : 학습 적용된 유효 데이터
     target_vars : [{Name, Unit, Direction, ...}] (df 에 컬럼이 있는 것만 넘어온다)
     style       : {x_title, y_title, title_font_size, tick_font_size, line_width,
-                   show_markers, colors: {target_name: hex}}
+                   show_markers, colors: {target_name: hex}, normalize, show_trendline,
+                   trendline_opacity, trend_degree}
     """
     var_name = var["Name"]
     is_cat = "Categorical" in var.get("Type", "")
     x_raw = df[var_name]
     order = np.arange(len(x_raw)) if is_cat else np.argsort(
         pd.to_numeric(x_raw, errors="coerce").values, kind="stable")
+    normalize = style.get("normalize", True)
+    trend_degree = int(style.get("trend_degree", 1))
 
     fig = go.Figure()
     for i, tv in enumerate(target_vars):
@@ -220,32 +223,40 @@ def build_variable_figure(df, var, target_vars, style):
             continue
         y_norm = _normalize(df[tname]).values[order]
         y_orig = pd.to_numeric(df[tname], errors="coerce").values[order]
+        y_plot = y_norm if normalize else y_orig
         xs = x_raw.values[order]
         color = style["colors"].get(tname, origin_color(i))
         unit = f" {tv['Unit']}" if tv.get("Unit") else ""
 
         # 포인트만 찍는다 (점끼리 잇지 않음) — 목표별로 마커 모양도 다르게 순환.
         if style["show_markers"]:
+            if normalize:
+                hover = (f"{var_name}: %{{x}}<br>{tname}: %{{customdata:.6g}}{unit}"
+                         f"<br>정규화: %{{y:.3f}}<extra></extra>")
+            else:
+                hover = f"{var_name}: %{{x}}<br>{tname}: %{{y:.6g}}{unit}<extra></extra>"
             fig.add_trace(go.Scatter(
-                x=xs, y=y_norm,
+                x=xs, y=y_plot,
                 mode="markers",
                 name=tname,
                 marker=dict(color=color, size=10, symbol=marker_symbol(i)),
                 customdata=y_orig,
-                hovertemplate=(f"{var_name}: %{{x}}<br>{tname}: %{{customdata:.6g}}{unit}"
-                               f"<br>정규화: %{{y:.3f}}<extra></extra>"),
+                hovertemplate=hover,
                 legendgroup=tname,
             ))
 
-        # 추세선(선형 회귀)은 포인트와 별개 트레이스로, 기본 40% 투명도로 그린다.
+        # 추세선(다항 회귀, 기본 1차=선형)은 포인트와 별개 트레이스로, 기본 40% 투명도로 그린다.
         # 범주형 x축은 회귀선이 의미가 없어 건너뛴다.
         if style.get("show_trendline", True) and not is_cat:
             xs_num = pd.to_numeric(pd.Series(xs), errors="coerce").values
-            fit_mask = np.isfinite(xs_num) & np.isfinite(y_norm)
-            if fit_mask.sum() >= 2 and np.ptp(xs_num[fit_mask]) > 0:
-                slope, intercept = np.polyfit(xs_num[fit_mask], y_norm[fit_mask], 1)
-                x_line = np.array([xs_num[fit_mask].min(), xs_num[fit_mask].max()])
-                y_line = slope * x_line + intercept
+            fit_mask = np.isfinite(xs_num) & np.isfinite(y_plot)
+            # 차수+1개 이상의 점이 있어야 그 차수로 과적합 없이 피팅할 수 있다.
+            if fit_mask.sum() >= trend_degree + 1 and np.ptp(xs_num[fit_mask]) > 0:
+                coeffs = np.polyfit(xs_num[fit_mask], y_plot[fit_mask], trend_degree)
+                # 1차보다 높은 차수는 두 점을 직선으로 잇는 걸로는 곡률이 안 보이므로
+                # 구간을 촘촘히 나눠 곡선으로 그린다.
+                x_line = np.linspace(xs_num[fit_mask].min(), xs_num[fit_mask].max(), 100)
+                y_line = np.polyval(coeffs, x_line)
                 fig.add_trace(go.Scatter(
                     x=x_line, y=y_line,
                     mode="lines",
@@ -274,7 +285,13 @@ def build_variable_figure(df, var, target_vars, style):
 
     y_kw = dict(axis_common)
     y_kw["title"] = dict(text=style["y_title"], font=title_font)
-    y_kw["range"] = [-0.05, 1.05]
+    if normalize:
+        # 정규화(0~1) 모드에서만 축 범위를 고정한다. 원본값은 목표마다 단위/스케일이
+        # 달라 고정 범위가 의미 없으므로 Plotly 자동 범위에 맡긴다.
+        y_kw["range"] = [-0.05, 1.05]
+    else:
+        y_kw["exponentformat"] = "E"
+        y_kw["showexponent"] = "all"
 
     fig.update_layout(
         template="simple_white",
@@ -401,10 +418,15 @@ def render_variable_charts(df_valid, config_vars, target_vars, key_prefix="vardi
         tick_fs = cS[1].number_input("눈금 글씨 크기", 6, 50, 30, key=f"{key_prefix}_tick_fs")
         line_w = cS[2].number_input("추세선 두께", 0.5, 10.0, 2.0, step=0.5, key=f"{key_prefix}_lw")
         show_markers = cS[3].checkbox("포인트 표시", True, key=f"{key_prefix}_mk")
-        cT = st.columns(2)
+        cT = st.columns(4)
         show_trendline = cT[0].checkbox("추세선 표시", True, key=f"{key_prefix}_trend")
         trendline_opacity = cT[1].slider("추세선 투명도", 0, 100, 40, key=f"{key_prefix}_trend_op") / 100.0
-        y_title = st.text_input("Y축 제목 (공통)", "정규화 목표값 (0–1)", key=f"{key_prefix}_ytitle")
+        trend_degree = cT[2].number_input("추세선 차수", 1, 6, 1, key=f"{key_prefix}_trend_deg",
+                                          help="1=선형, 2 이상은 다항 회귀 곡선")
+        normalize = cT[3].checkbox("Y값 정규화 (0~1)", True, key=f"{key_prefix}_norm",
+                                   help="끄면 목표별 원본 단위 그대로 표시합니다 (목표마다 스케일이 달라도 그대로 겹쳐 그림).")
+        default_y_title = "정규화 목표값 (0–1)" if normalize else "목표값 (원본 단위)"
+        y_title = st.text_input("Y축 제목 (공통)", default_y_title, key=f"{key_prefix}_ytitle")
         st.caption("목표별 선 색상 (Origin 팔레트 기본)")
         ccols = st.columns(min(len(targets), 6))
         colors = {}
@@ -418,7 +440,8 @@ def render_variable_charts(df_valid, config_vars, target_vars, key_prefix="vardi
         x_title = st.text_input(f"X축 제목 — {vname}", f"{vname}{unit}", key=f"{key_prefix}_xt_{vi}")
         style = dict(x_title=x_title, y_title=y_title, title_font_size=title_fs,
                      tick_font_size=tick_fs, line_width=line_w, show_markers=show_markers, colors=colors,
-                     show_trendline=show_trendline, trendline_opacity=trendline_opacity)
+                     show_trendline=show_trendline, trendline_opacity=trendline_opacity,
+                     trend_degree=trend_degree, normalize=normalize)
         fig = build_variable_figure(df_valid, var, targets, style)
         st.plotly_chart(fig, width="content", config={
             "displaylogo": False, "responsive": False,
