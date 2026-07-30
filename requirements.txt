@@ -4,5 +4,10 @@ numpy
 openpyxl
 scikit-optimize
 streamlit-extras
-botorch
 plotly
+
+# CPU-only torch (Streamlit Community Cloud has no GPU; default PyPI torch pulls
+# in the full CUDA stack, which is several GB and can blow past memory limits).
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+botorch
