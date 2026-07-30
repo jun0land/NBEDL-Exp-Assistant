@@ -16,11 +16,25 @@ from origin_charts import render_variable_charts, render_excluded_expander
 # 다중 목표 탭에서만 안내 메시지를 띄운다.
 try:
     import torch
+    # 컨테이너는 CPU 쿼터가 1코어 안팎으로 작아도 torch는 기본적으로 호스트가 보고하는
+    # 전체 코어 수만큼 스레드를 띄운다 — 작은 쿼터를 여러 스레드가 다투면서 실제 필요한
+    # 것보다 훨씬 높은 CPU 사용률로 잡혀 Streamlit Cloud 스로틀을 유발한다. 스레드를
+    # 고정해 피크 사용률을 낮춘다 (계산 시간은 다소 늘지만 스로틀보다는 낫다).
+    torch.set_num_threads(1)
     from botorch.models import SingleTaskGP, ModelListGP
     from botorch.models.transforms.outcome import Standardize
     from botorch.fit import fit_gpytorch_mll
     from gpytorch.mlls import SumMarginalLogLikelihood
-    from botorch.acquisition.multi_objective.monte_carlo import qNoisyExpectedHypervolumeImprovement
+    # qNEHVI는 수치적으로 불안정할 수 있다는 BoTorch 자체 경고가 있어, 같은 API의
+    # 로그 스케일 버전(qLogNEHVI)을 쓴다 — 안정성뿐 아니라 그래디언트가 더 잘 살아있어
+    # 같은 예산(restarts/samples)으로도 더 적은 반복에 수렴하는 경향이 있다.
+    from botorch.acquisition.multi_objective.logei import qLogNoisyExpectedHypervolumeImprovement
+    # 목표 5개 이상은 하이퍼볼륨 계산 자체가 조합적으로 폭발해(실측: 목표 2개 2초 -> 4개 20초
+    # -> 8개는 8분 넘게도 안 끝남) qLogNEHVI를 못 쓴다. ParEGO 스타일 스칼라화(단일목표 EI를
+    # 랜덤 가중치로 여러 번)로 자동 전환하기 위한 임포트.
+    from botorch.acquisition.logei import qLogNoisyExpectedImprovement
+    from botorch.acquisition.objective import GenericMCObjective
+    from botorch.utils.multi_objective.scalarization import get_chebyshev_scalarization
     from botorch.sampling.normal import SobolQMCNormalSampler
     from botorch.optim import optimize_acqf
     from botorch.utils.transforms import normalize, unnormalize
@@ -586,13 +600,23 @@ def process_robust_data_multi(df, feature_cols, target_cols):
         robust_Y.append(row_y)
     return robust_X, robust_Y
 
+MOBO_HYPERVOLUME_MAX_OBJECTIVES = 4  # 이보다 목표가 많으면 스칼라화(ParEGO) 경로로 자동 전환
+
 def run_mobo(X_train, Y_train, config_vars, directions, n_candidates=3):
-    """다중목표 베이지안 최적화 (qNEHVI, BoTorch).
+    """다중목표 베이지안 최적화 (BoTorch).
 
     단일목표 EI는 "현재 최고값 대비 개선 기댓값"을 계산하는데, 이를 다차원으로 일반화한 것이
     기대 하이퍼볼륨 개선량(EHVI)이다 — 목표가 1개면 하이퍼볼륨은 구간 길이가 되어 EI와 정확히
-    같은 식으로 축소되므로 원리는 동일하다(목표 1개는 skopt 경로를 그대로 쓴다). 여기서는
-    목표가 2개 이상일 때 파레토 프론트(하이퍼볼륨)를 가장 넓히는 다음 실험 후보를 찾는다.
+    같은 식으로 축소되므로 원리는 동일하다(목표 1개는 skopt 경로를 그대로 쓴다). 목표가
+    MOBO_HYPERVOLUME_MAX_OBJECTIVES개 이하일 때는 파레토 프론트(하이퍼볼륨)를 가장 넓히는
+    다음 실험 후보를 정확히 찾는다(qLogNEHVI).
+
+    목표가 그보다 많으면 하이퍼볼륨 계산 자체가 조합적으로 폭발한다 — 실측 기준 목표 2개는
+    2초, 4개는 20초, 8개는 8분이 지나도 안 끝났다(Streamlit Cloud CPU 스로틀의 직접 원인).
+    이 경우 ParEGO 방식(Knowles 2006)으로 전환한다: 후보마다 서로 다른 랜덤 가중치로 목표들을
+    체비셰프 스칼라화해 하나의 값으로 합친 뒤, 그 값에 대한 평범한 단일목표 EI를 최적화한다.
+    하이퍼볼륨/파레토 분할 계산이 전혀 없어 목표 개수에 비례해서만 느려지고, 후보마다 가중치가
+    달라 파레토 프론트의 서로 다른 지점을 겨냥하므로 여전히 다양한 트레이드오프를 보여준다.
 
     Categorical 변수는 옵션 인덱스(0..k-1)로 연속 인코딩한 뒤 반올림해서 되돌린다 — 완전한
     혼합공간 최적화(optimize_acqf_mixed)보다 단순하지만, 후보 3개를 뽑는 실험 추천 용도로는
@@ -647,22 +671,45 @@ def run_mobo(X_train, Y_train, config_vars, directions, n_candidates=3):
     mll = SumMarginalLogLikelihood(model.likelihood, model)
     fit_gpytorch_mll(mll)
 
-    y_range = (Y_adj.max(dim=0).values - Y_adj.min(dim=0).values).clamp(min=1e-6)
-    ref_point = Y_adj.min(dim=0).values - 0.1 * y_range
-
-    sampler = SobolQMCNormalSampler(sample_shape=torch.Size([128]))
-    acq = qNoisyExpectedHypervolumeImprovement(
-        model=model, ref_point=ref_point.tolist(), X_baseline=X_norm,
-        sampler=sampler, prune_baseline=True,
-    )
-
+    n_obj = Y_adj.shape[-1]
     standard_bounds = torch.zeros(2, X_norm.shape[-1], dtype=torch.double)
     standard_bounds[1] = 1.0
-    candidates_norm, _ = optimize_acqf(
-        acq_function=acq, bounds=standard_bounds, q=n_candidates,
-        num_restarts=10, raw_samples=256,
-        options={"batch_limit": 5, "maxiter": 200}, sequential=True,
-    )
+    sampler = SobolQMCNormalSampler(sample_shape=torch.Size([64]))
+
+    if n_obj <= MOBO_HYPERVOLUME_MAX_OBJECTIVES:
+        # 정확한 파레토 하이퍼볼륨 기반 (qLogNEHVI) — 목표가 적을 때만 감당 가능.
+        y_range = (Y_adj.max(dim=0).values - Y_adj.min(dim=0).values).clamp(min=1e-6)
+        ref_point = Y_adj.min(dim=0).values - 0.1 * y_range
+        acq = qLogNoisyExpectedHypervolumeImprovement(
+            model=model, ref_point=ref_point.tolist(), X_baseline=X_norm,
+            sampler=sampler, prune_baseline=True,
+        )
+        candidates_norm, _ = optimize_acqf(
+            acq_function=acq, bounds=standard_bounds, q=n_candidates,
+            num_restarts=5, raw_samples=128,
+            options={"batch_limit": 5, "maxiter": 200}, sequential=True,
+        )
+    else:
+        # ParEGO 스칼라화 — 후보마다 다른 랜덤 가중치로 목표를 하나의 값으로 합쳐
+        # 평범한 단일목표 EI를 최적화한다 (하이퍼볼륨 계산 없음 -> 목표 개수에 선형).
+        cand_rows = []
+        for i in range(n_candidates):
+            gen = torch.Generator().manual_seed(i)
+            weights = torch.rand(n_obj, generator=gen, dtype=torch.double)
+            weights = weights / weights.sum()
+            scalarized_obj = GenericMCObjective(get_chebyshev_scalarization(weights=weights, Y=Y_adj))
+            acq = qLogNoisyExpectedImprovement(
+                model=model, X_baseline=X_norm, objective=scalarized_obj,
+                sampler=sampler, prune_baseline=True,
+            )
+            cand, _ = optimize_acqf(
+                acq_function=acq, bounds=standard_bounds, q=1,
+                num_restarts=5, raw_samples=128,
+                options={"batch_limit": 5, "maxiter": 200},
+            )
+            cand_rows.append(cand)
+        candidates_norm = torch.cat(cand_rows, dim=0)
+
     candidates_raw_t = unnormalize(candidates_norm, bounds=bounds_raw)
 
     with torch.no_grad():
