@@ -23,6 +23,8 @@ import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 
+import analysis
+
 # ---- Myriad Pro 번들 폰트 ----
 # pd 앱은 폰트를 이름만 지정해 클라이언트 설치본에 의존했다. 여기서는 static/fonts 에
 # 폰트를 번들해 @font-face 로 로드한다 → 폰트 미설치 PC나 내보낸 이미지에서도 동일하게 나온다.
@@ -104,7 +106,7 @@ def _normalize(series) -> pd.Series:
 # =====================================================================
 # 제외된 데이터
 # =====================================================================
-def compute_excluded_rows(df_data, feature_cols, target_cols, config_vars, include_range):
+def compute_excluded_rows(df_data, feature_cols, target_cols, config_vars, include_range, method="iqr", alpha=0.05):
     """AI 학습에서 빠지는 행 + '제외 사유' 컬럼을 붙인 DataFrame 반환. 없으면 빈 DataFrame.
 
     사유 3종:
@@ -134,16 +136,10 @@ def compute_excluded_rows(df_data, feature_cols, target_cols, config_vars, inclu
                 if t_col not in group.columns:
                     continue
                 y = pd.to_numeric(group[t_col], errors="coerce")
-                yv = y.dropna()
-                if len(yv) >= 3:
-                    q1, q3 = np.percentile(yv, [25, 75])
-                    iqr = q3 - q1
-                    lo, hi = q1 - 1.5 * iqr, q3 + 1.5 * iqr
-                    out = group.index[(y < lo) | (y > hi)]
-                    # 전부 이상치면 process_robust_data 가 원본을 유지하므로 제외로 치지 않는다.
-                    if 0 < len(out) < len(yv):
-                        for idx in out:
-                            reasons[idx].append(f"이상치 ({t_col})")
+                m = analysis.outlier_mask(y.tolist(), method, alpha)
+                out_idx = [gi for gi, flag in zip(group.index, m) if flag]
+                for gi in out_idx:
+                    reasons[gi].append(f"이상치 ({t_col})")
 
     # 범위 밖 (단일 목표 경로에서만 실제 제외됨)
     if include_range:
@@ -173,9 +169,9 @@ def compute_excluded_rows(df_data, feature_cols, target_cols, config_vars, inclu
     return out_df
 
 
-def render_excluded_expander(df_data, feature_cols, target_cols, config_vars, include_range, key):
+def render_excluded_expander(df_data, feature_cols, target_cols, config_vars, include_range, key, method="iqr", alpha=0.05):
     """AI 계산 영역에 '제외된 데이터 N건' 익스팬더를 그린다."""
-    exc = compute_excluded_rows(df_data, feature_cols, target_cols, config_vars, include_range)
+    exc = compute_excluded_rows(df_data, feature_cols, target_cols, config_vars, include_range, method, alpha)
     n = len(exc)
     with st.expander(f"🚫 제외된 데이터 {n}건 (AI 학습에서 빠짐)", expanded=False):
         st.caption(

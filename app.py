@@ -11,6 +11,7 @@ from streamlit_extras.colored_header import colored_header
 from streamlit_extras.metric_cards import style_metric_cards
 from origin_charts import render_variable_charts, render_excluded_expander
 from data_manage import render_data_manager
+import analysis
 
 # 다중 목표(2개 이상) 최적화에만 쓰는 BoTorch는 무겁고(torch 포함) 목표 1개짜리 사용자에게는
 # 불필요하다. import를 감싸서, 미설치 상태에서도 단일 목표 경로(skopt)는 그대로 동작하고
@@ -283,145 +284,182 @@ st.markdown(custom_css, unsafe_allow_html=True)
 # 3.5 사용 설명서(메뉴얼) 팝업
 # ==========================================
 MANUAL_HTML = """
-<p>이 앱은 실험 조건과 결과를 입력하면, <b>AI(베이지안 최적화)</b>가 다음에 시도해볼
-<b>최적의 공정 조건</b>을 추천해 주는 실험 보조 도구입니다.</p>
+<p>이 앱은 실험 조건과 결과를 입력하면, <b>AI(베이지안 최적화)</b>가 다음에 시도해볼 <b>최적의 공정 조건</b>을 추천해 주는 실험 보조 도구입니다. 자세한 분석 모델·원칙은 오른쪽 <b>📊 분석 방법</b> 배너를 참고하세요.</p>
 
 <h4>🚀 단계별 따라하기</h4>
 
 <div class="nbedl-step">STEP 1. 프로젝트 설정 <span class="nbedl-loc">· 실험 설정 화면</span></div>
 <ul>
-  <li>이미 실험 데이터 파일(.xlsx)이 있다면 → 맨 위 <b>"기존 실험 데이터 불러오기"</b>에 업로드하면 설정이 자동으로 채워집니다.</li>
-  <li>처음이라면 직접 입력: <b>실험 프로젝트 이름</b>(예: <code>NBEDL_Experiment_01</code>), <b>목표 지표 이름</b>(예: <code>J_sc</code>)과 <b>최적화 방향</b>(최대화/최소화), <b>환경 변수</b>(온도·습도 등, 선택), <b>공정 변수</b>(이름·단위·타입·범위). <b>"➕ 공정 변수 블럭 추가"</b>로 여러 개 추가.</li>
-  <li>다 됐으면 <b>"🚀 실험 시작 및 대시보드 생성"</b> 클릭</li>
+  <li>기존 데이터 파일(.xlsx)이 있으면 상단 <b>"기존 실험 데이터 불러오기"</b>에 올리면 설정·이상치 방법까지 복원됩니다.</li>
+  <li>처음이면 직접 입력: <b>실험 이름</b>, <b>목표 지표</b>(예: <code>J_sc</code>)와 <b>방향</b>(최대화/최소화) — <b>목표를 2개 이상</b> 넣으면 자동으로 다중목표(파레토) 최적화, <b>환경 변수</b>(선택), <b>공정 변수</b>(이름·단위·타입·범위)를 <b>"➕"</b>로 추가.</li>
+  <li><b>"🚀 실험 시작 및 대시보드 생성"</b> 클릭</li>
 </ul>
 
 <div class="nbedl-step">STEP 2. 실험 결과 입력 <span class="nbedl-loc">· 📝 신규 실험 입력 탭</span></div>
 <ul>
-  <li>각 조건값과 결과값을 넣고 <b>"➕ 데이터 추가"</b> 버튼으로 저장 <span class="nbedl-tip">(Enter는 값 확정만, 추가는 버튼으로)</span></li>
-  <li>잘못 넣었다면 <b>"↩️ 마지막 입력 취소"</b>로 직전 데이터 삭제</li>
+  <li>샘플명·조건·결과값을 넣고 <b>"➕ 데이터 추가"</b> <span class="nbedl-tip">(Enter는 값 확정만, 추가는 버튼으로)</span></li>
+  <li>잘못 넣었으면 <b>"↩️ 마지막 입력 취소"</b></li>
 </ul>
 
-<div class="nbedl-step">STEP 3. 데이터 검토 <span class="nbedl-loc">· 🗂️ 데이터베이스 관리 탭</span></div>
+<div class="nbedl-step">STEP 3. 데이터 관리 <span class="nbedl-loc">· 🗂️ 데이터베이스 관리 탭</span></div>
 <ul>
-  <li>지금까지 입력한 모든 이력을 표에서 확인·수정</li>
-  <li><b>"학습 적용"</b> 체크를 해제하면 그 데이터는 AI 학습에서 제외됩니다 (이상치 처리에 유용)</li>
+  <li><b>검색</b>·<b>공정 변수별 필터</b>로 원하는 행만 좁히고, <b>전체 선택/해제</b>로 <b>"학습 적용"</b>을 일괄 관리(해제 = AI 학습에서 제외)</li>
+  <li><b>필터된 행 일괄 삭제</b>, <b>표 높이</b> 조절(큰 모니터에서 넓게)</li>
+  <li><b>요약 통계</b> — 변수별 범위·평균과, 모든 목표의 trade-off를 고려한 <b>종합 최적 조건</b> 표시</li>
 </ul>
 
-<div class="nbedl-step">STEP 4. AI 추천 받기 <span class="nbedl-loc">· 🤖 AI 최적화 대시보드 탭</span></div>
+<div class="nbedl-step">STEP 4. 데이터 진단 <span class="nbedl-loc">· 🔬 데이터 진단 탭</span></div>
 <ul>
-  <li><b>"🚀 AI 계산 실행"</b> 클릭 → 다음에 시도할 <b>추천 조건 3가지</b> 제시</li>
-  <li><b>경향 곡선</b>으로 실험이 목표에 수렴하는지 확인</li>
-  <li>⚠️ 최소 <b>2개 이상의 유효 데이터</b>가 있어야 계산됩니다</li>
+  <li><b>이상치 판정 방법</b>(IQR·Z·MAD·ESD·없음)과 <b>유의수준 α</b> 선택 — 강건 평균·제외 목록·박스플롯에 함께 적용</li>
+  <li><b>제외된 데이터</b>를 사유별로 확인, <b>박스플롯</b>으로 반복 측정 분포·이상치 확인</li>
+  <li><b>목표별 수렴 곡선</b>으로 실험이 목표에 수렴하는지 확인</li>
 </ul>
 
-<div class="nbedl-step">STEP 5. 저장 &amp; 관리 <span class="nbedl-loc">· 왼쪽 사이드바</span></div>
+<div class="nbedl-step">STEP 5. AI 추천 받기 <span class="nbedl-loc">· 🤖 AI 최적화 대시보드 탭</span></div>
 <ul>
-  <li><b>"📥 최신 데이터 Excel 다운로드"</b>로 저장 → 다음에 이 파일을 STEP 1에서 올리면 이어서 작업 가능</li>
+  <li><b>"🚀 AI 계산 실행"</b> → 다음에 시도할 <b>추천 조건 3가지</b> (최소 2개 유효 데이터 필요)</li>
+  <li><b>공정 변수별 그래프</b> — 표시 배율·정규화·추세선 조절, <b>PNG(투명)·JPG·CSV</b>로 내보내기(출판용 960×768)</li>
+</ul>
+
+<div class="nbedl-step">STEP 6. 저장 &amp; 관리 <span class="nbedl-loc">· 왼쪽 사이드바</span></div>
+<ul>
+  <li><b>"📥 최신 데이터 Excel 다운로드"</b>로 저장 → STEP 1에서 다시 올리면 이어서 작업(이상치 설정 포함 복원)</li>
   <li>"🛠️ 환경 설정으로 돌아가기" / "⚠️ 모든 데이터 초기화"</li>
 </ul>
 
 <h4>⚠️ 주의사항 &amp; 팁</h4>
 <div class="nbedl-note">
   <ul>
-    <li><b>자동 저장이 안 됩니다.</b> 데이터는 브라우저 세션에만 있어, 새로고침하거나 창을 닫으면 사라질 수 있습니다. <b>작업 후 반드시 Excel로 다운로드</b>하세요.</li>
-    <li><b>"모든 데이터 초기화"는 되돌릴 수 없습니다.</b> 초기화 전에 꼭 저장하세요.</li>
-    <li><b>데이터가 많을수록 AI 추천이 정확</b>해집니다. 초반엔 다양한 조건을 폭넓게 시도해 보세요.</li>
-    <li><b>이상치 자동 제거:</b> <u>완전히 같은 공정 조건</u>을 <b>3번 이상 반복 측정</b>하면, AI가 그 그룹 안에서 유난히 튀는 값(IQR 1.5배 기준)을 자동으로 걸러내고 나머지의 평균을 사용합니다. 조건이 조금이라도 다르면 다른 그룹이라 이 판정이 되지 않습니다. 반복이 <b>2개 이하면 판정을 하지 않고</b>, 통계적으로는 <b>5번 이상</b> 반복해야 이상치가 잘 잡힙니다.</li>
-    <li>어떤 데이터가 왜 빠졌는지는 <b>AI 최적화 대시보드 탭의 "🚫 제외된 데이터" 칸</b>에서 사유별로 확인할 수 있습니다.</li>
+    <li><b>자동 저장이 안 됩니다.</b> 데이터는 브라우저 세션에만 있어 새로고침·창 닫기 시 사라질 수 있습니다. <b>작업 후 반드시 Excel로 다운로드</b>하세요.</li>
+    <li><b>"모든 데이터 초기화"는 되돌릴 수 없습니다.</b></li>
+    <li><b>데이터가 많을수록 AI 추천이 정확</b>해집니다.</li>
+    <li><b>이상치 제거</b>는 같은 조건 3회 이상 반복 그룹에서만 일어나며, 방법·민감도는 <b>🔬 데이터 진단</b> 탭에서 고릅니다. 원리는 <b>📊 분석 방법</b> 배너 참고.</li>
   </ul>
 </div>
 """
 
-DRAWER_CSS = """
-#nbedl-manual-root, #nbedl-manual-root * { box-sizing: border-box; }
-#nbedl-manual-root { font-family: 'Pretendard', sans-serif; }
+METHODOLOGY_HTML = """
+<p>이 앱이 쓰는 분석 모델과 원칙을 정리했습니다. 모든 계산은 <b>학습 적용된 데이터</b>만 사용합니다.</p>
 
-.nbedl-bookmark {
-  position: fixed; top: 168px; right: 0; z-index: 2147483401;
+<h4>① 이상치 처리 (반복 측정)</h4>
+<p><b>완전히 같은 공정 조건</b>을 여러 번 측정한 그룹 안에서만 이상치를 판정합니다. 조건이 조금이라도 다르면 다른 그룹이라 서로 비교하지 않습니다. 그룹 크기가 <b>3 미만이면 판정하지 않고</b>, 통계적으로는 5회 이상 반복해야 잘 잡힙니다. "🔬 데이터 진단" 탭에서 방법을 고릅니다.</p>
+<ul>
+  <li><b>없음</b> — 제거하지 않고 반복값 전부 사용</li>
+  <li><b>IQR / 박스플롯</b> — Tukey 울타리, Q1−1.5·IQR ~ Q3+1.5·IQR 밖. 분포 가정이 없어 무난(기본값)</li>
+  <li><b>Z-점수</b> — 평균·표준편차 기반 |z|&gt;3. 정규분포 가정. 이상치가 표준편차를 부풀려 스스로를 가리는 약점</li>
+  <li><b>수정된 Z-점수 (MAD)</b> — 중앙값·중앙값절대편차 기반 |M|&gt;3.5. 소표본·치우침에 강건</li>
+  <li><b>ESD (일반화 극단 스튜던트화 편차, Rosner)</b> — 유의수준 α로 여러 이상치를 순차 검정</li>
+</ul>
+<p class="nbedl-tip">이상치 판정에 절대적 정답은 없습니다. 방법마다 결과가 달라질 수 있어 데이터 성격에 맞게 고르세요.</p>
+
+<h4>② 유의수준 α (ESD 전용)</h4>
+<p>ESD는 α로 민감도를 조절합니다. <b>α가 클수록 이상치를 더 많이 제거</b>해 학습 데이터가 줄어듭니다. 기본 0.05, 프리셋 0.01, 직접 입력 가능하며 <b>Excel 파일에 저장</b>되어 재업로드 시 복원됩니다. (IQR·Z·MAD는 α 대신 관례 상수 1.5×·3·3.5 사용)</p>
+
+<h4>③ 강건 평균</h4>
+<p>같은 조건 반복값에서 이상치를 뺀 나머지의 <b>평균</b>을 그 조건의 대표값으로 씁니다. 값이 전부 이상치로 판정되면(무의미) 아무것도 빼지 않습니다.</p>
+
+<h4>④ 단일 목표 최적화 — 베이지안 최적화</h4>
+<p>목표가 1개면 <b>가우시안 프로세스(GP)</b>로 목표를 모델링하고 <b>기대 개선량(Expected Improvement)</b>이 큰 다음 조건을 제안합니다(skopt). "지금 최고보다 얼마나 더 좋아질 것으로 기대되는가"를 최대화합니다.</p>
+
+<h4>⑤ 다중 목표 최적화 — MOBO (qNEHVI)</h4>
+<p>목표가 2개 이상이면 상충하는 목표들의 <b>파레토 프론트</b>를 넓히는 조건을 찾습니다. 기대 개선량을 다차원으로 일반화한 <b>기대 하이퍼볼륨 개선(qNEHVI, BoTorch)</b>을 씁니다 — 목표가 1개면 EI와 같아지는 자연스러운 확장입니다.</p>
+
+<h4>⑥ 추세선 — 다항 회귀</h4>
+<p>공정 변수별 그래프의 추세선은 <b>최소제곱 다항 회귀</b>입니다(기본 1차=선형, 차수 조절 가능). 점들의 경향 요약일 뿐 인과를 뜻하지 않습니다.</p>
+
+<h4>⑦ 정규화 &amp; 종합 최적 조건</h4>
+<p>여러 목표를 한 그래프에 겹칠 때 각 목표를 <b>min–max로 0~1 정규화</b>합니다. "종합 최적 조건"은 각 목표를 방향(최대화/최소화)에 맞춰 0~1로 만든 <b>desirability</b>의 (가중)평균이 가장 높은 실험 조건 — 한쪽으로 치우치지 않은 trade-off 균형점을 고릅니다.</p>
+"""
+
+DRAWER_CSS_TMPL = """
+#__ROOT__, #__ROOT__ * { box-sizing: border-box; }
+#__ROOT__ { font-family: 'Pretendard', sans-serif; }
+#__ROOT__ .nbedl-bookmark {
+  position: fixed; top: __TOP__; right: 0; z-index: 2147483401;
   display: flex; align-items: center; justify-content: center;
   padding: 18px 9px; writing-mode: vertical-rl; text-orientation: mixed;
-  background: linear-gradient(160deg, #ed542b, #f68b21); color: #fff;
+  background: linear-gradient(160deg, __GRADA__, __GRADB__); color: #fff;
   font-weight: 800; letter-spacing: 2px; font-size: 15px;
-  border-radius: 14px 0 0 14px; box-shadow: -4px 6px 18px rgba(237,84,43,0.35);
+  border-radius: 14px 0 0 14px; box-shadow: -4px 6px 18px rgba(0,0,0,0.22);
   cursor: pointer; user-select: none;
-  transition: padding-right .18s ease, box-shadow .18s ease, transform .18s ease;
+  transition: padding-right .18s ease, box-shadow .18s ease;
 }
-.nbedl-bookmark:hover { padding-right: 15px; box-shadow: -7px 8px 24px rgba(237,84,43,0.5); }
-
-.nbedl-backdrop {
+#__ROOT__ .nbedl-bookmark:hover { padding-right: 15px; box-shadow: -7px 8px 24px rgba(0,0,0,0.32); }
+#__ROOT__ .nbedl-backdrop {
   position: fixed; inset: 0; z-index: 2147483500;
   background: rgba(20,20,20,0.30);
   -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
   opacity: 0; pointer-events: none; transition: opacity .35s ease;
 }
-.nbedl-panel {
-  /* zoom 스케일 하에서 vh/vw는 뷰포트 고정이라 어긋남 → top/bottom 앵커 + % 사용 */
+#__ROOT__ .nbedl-panel {
   position: fixed; top: 0; bottom: 0; right: 0; width: min(460px, 92%);
   z-index: 2147483501; overflow-y: auto; padding: 30px 30px 44px;
   background: rgba(255,255,255,0.94);
   -webkit-backdrop-filter: blur(26px) saturate(160%); backdrop-filter: blur(26px) saturate(160%);
-  border-left: 6px solid #ed542b; box-shadow: -18px 0 50px rgba(0,0,0,0.20);
+  border-left: 6px solid __ACCENT__; box-shadow: -18px 0 50px rgba(0,0,0,0.20);
   transform: translateX(106%); transition: transform .38s cubic-bezier(.22,.61,.36,1);
   color: #1a1a1a;
 }
-#nbedl-manual-root.open .nbedl-backdrop { opacity: 1; pointer-events: auto; }
-#nbedl-manual-root.open .nbedl-panel { transform: translateX(0); }
-
-.nbedl-close {
+#__ROOT__.open .nbedl-backdrop { opacity: 1; pointer-events: auto; }
+#__ROOT__.open .nbedl-panel { transform: translateX(0); }
+#__ROOT__ .nbedl-close {
   position: absolute; top: 16px; right: 18px; width: 34px; height: 34px;
   border: none; border-radius: 10px; background: rgba(0,0,0,0.06); color: #333;
   font-size: 15px; cursor: pointer; transition: background .2s ease, color .2s ease;
 }
-.nbedl-close:hover { background: #ed542b; color: #fff; }
-
-.nbedl-title { font-size: 21px; font-weight: 900; color: #ed542b; margin: 2px 40px 18px 0;
-  border-bottom: 2px solid rgba(237,84,43,0.25); padding-bottom: 12px; }
-.nbedl-panel h4 { font-size: 16px; font-weight: 800; color: #ed542b; margin: 24px 0 8px; }
-.nbedl-panel p { line-height: 1.65; margin: 8px 0; }
-.nbedl-panel ul { margin: 6px 0 14px; padding-left: 20px; }
-.nbedl-panel li { line-height: 1.6; margin: 5px 0; }
-.nbedl-step { font-weight: 800; margin: 18px 0 4px; color: #1a1a1a; }
-.nbedl-loc { font-weight: 600; color: #9a8f89; font-size: 0.9em; }
-.nbedl-tip { color: #ed542b; font-weight: 700; font-size: 0.9em; }
-.nbedl-panel code { background: rgba(237,84,43,0.10); color: #c53a17; padding: 1px 6px; border-radius: 6px; font-size: 0.9em; }
-.nbedl-note { background: rgba(255,244,235,0.85); border-left: 4px solid #f68b21; border-radius: 10px; padding: 14px 16px; margin-top: 16px; }
-.nbedl-note ul { margin: 0; }
+#__ROOT__ .nbedl-close:hover { background: __ACCENT__; color: #fff; }
+#__ROOT__ .nbedl-title { font-size: 21px; font-weight: 900; color: __ACCENT__; margin: 2px 40px 18px 0;
+  border-bottom: 2px solid rgba(0,0,0,0.12); padding-bottom: 12px; }
+#__ROOT__ .nbedl-panel h4 { font-size: 16px; font-weight: 800; color: __ACCENT__; margin: 24px 0 8px; }
+#__ROOT__ .nbedl-panel p { line-height: 1.65; margin: 8px 0; }
+#__ROOT__ .nbedl-panel ul { margin: 6px 0 14px; padding-left: 20px; }
+#__ROOT__ .nbedl-panel li { line-height: 1.6; margin: 5px 0; }
+#__ROOT__ .nbedl-step { font-weight: 800; margin: 18px 0 4px; color: #1a1a1a; }
+#__ROOT__ .nbedl-loc { font-weight: 600; color: #9a8f89; font-size: 0.9em; }
+#__ROOT__ .nbedl-tip { color: __ACCENT__; font-weight: 700; font-size: 0.9em; }
+#__ROOT__ .nbedl-panel code { background: rgba(0,0,0,0.06); color: #c53a17; padding: 1px 6px; border-radius: 6px; font-size: 0.9em; }
+#__ROOT__ .nbedl-note { background: rgba(255,244,235,0.85); border-left: 4px solid #f68b21; border-radius: 10px; padding: 14px 16px; margin-top: 16px; }
+#__ROOT__ .nbedl-note ul { margin: 0; }
 """
 
-def render_manual_drawer():
-    """우측 모서리 북마크 탭 + 슬라이드-인 메뉴얼 패널을 부모 문서에 주입한다.
-    st.markdown은 <script>를 제거하므로 components.html(iframe)에서 JS로 주입한다."""
+def render_side_drawer(root_id, *, top_css, grad_a, grad_b, accent, bookmark_label, panel_title, content_html):
+    """오른쪽 모서리 북마크 + 슬라이드-인 패널을 부모 문서에 주입한다(여러 개 가능).
+    st.markdown은 <script>를 제거하므로 components.html(iframe)에서 JS로 주입한다.
+    CSS는 #root_id 로 스코프되어 드로어끼리 충돌하지 않는다."""
+    css = (DRAWER_CSS_TMPL.replace("__ROOT__", root_id).replace("__TOP__", top_css)
+           .replace("__GRADA__", grad_a).replace("__GRADB__", grad_b).replace("__ACCENT__", accent))
     payload = """
 <script>
 (function() {
   try {
     var doc = window.parent.document;
-    var ROOT_ID = 'nbedl-manual-root';
-    var STYLE_ID = 'nbedl-manual-style';
+    var ROOT_ID = '__ROOTID__';
+    var STYLE_ID = ROOT_ID + '-style';
     var oldRoot = doc.getElementById(ROOT_ID);
-    var wasOpen = !!(oldRoot && oldRoot.classList.contains('open'));  // 리런 시 열림 상태 유지
+    var wasOpen = !!(oldRoot && oldRoot.classList.contains('open'));
     if (oldRoot) oldRoot.remove();
-    var oldStyle = doc.getElementById(STYLE_ID);  if (oldStyle) oldStyle.remove();
+    var oldStyle = doc.getElementById(STYLE_ID); if (oldStyle) oldStyle.remove();
 
-    var style = doc.createElement('style');
-    style.id = STYLE_ID;
-    style.textContent = `__CSS__`;
-    doc.head.appendChild(style);
+    var style = doc.createElement('style'); style.id = STYLE_ID;
+    style.textContent = `__CSS__`; doc.head.appendChild(style);
 
-    var root = doc.createElement('div');
-    root.id = ROOT_ID;
+    var root = doc.createElement('div'); root.id = ROOT_ID; root.className = 'nbedl-drawer';
     root.innerHTML = `
-      <div class="nbedl-bookmark" title="사용 설명서 열기"><span>📖 사용 설명서</span></div>
+      <div class="nbedl-bookmark" title="__LABEL__"><span>__LABEL__</span></div>
       <div class="nbedl-backdrop"></div>
-      <aside class="nbedl-panel" role="dialog" aria-label="사용 설명서">
+      <aside class="nbedl-panel" role="dialog" aria-label="__LABEL__">
         <button class="nbedl-close" title="닫기 (Esc)">✕</button>
-        <div class="nbedl-title">📖 NBEDL Exp Assistant 사용 설명서</div>
+        <div class="nbedl-title">__TITLE__</div>
         __CONTENT__
       </aside>`;
     doc.body.appendChild(root);
     if (wasOpen) root.classList.add('open');
 
-    var openFn  = function() { root.classList.add('open'); };
+    var openFn = function() {
+      var all = doc.querySelectorAll('.nbedl-drawer.open');
+      for (var i = 0; i < all.length; i++) all[i].classList.remove('open');
+      root.classList.add('open');
+    };
     var closeFn = function() { root.classList.remove('open'); };
     root.querySelector('.nbedl-bookmark').addEventListener('click', openFn);
     root.querySelector('.nbedl-backdrop').addEventListener('click', closeFn);
@@ -431,16 +469,18 @@ def render_manual_drawer():
       window.parent.__nbedlEsc = true;
       doc.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
-          var r = doc.getElementById('nbedl-manual-root');
-          if (r) r.classList.remove('open');
+          var op = doc.querySelectorAll('.nbedl-drawer.open');
+          for (var i = 0; i < op.length; i++) op[i].classList.remove('open');
         }
       });
     }
-  } catch (err) { /* cross-origin 등 접근 불가 시 조용히 무시 */ }
+  } catch (err) { /* cross-origin 등 접근 불가 시 무시 */ }
 })();
 </script>
 """
-    payload = payload.replace("__CSS__", DRAWER_CSS).replace("__CONTENT__", MANUAL_HTML)
+    payload = (payload.replace("__ROOTID__", root_id).replace("__CSS__", css)
+               .replace("__LABEL__", bookmark_label).replace("__TITLE__", panel_title)
+               .replace("__CONTENT__", content_html))
     components.html(payload, height=0)
 
 
@@ -501,7 +541,7 @@ def apply_ui_zoom():
       doc.body.style.zoom = '';   // 과거 body-zoom 방식 잔재 제거
       st.textContent =
         '[data-testid="stMain"] .block-container { zoom: ' + z + '; }' +
-        '#nbedl-manual-root { zoom: ' + z + '; }';
+        '.nbedl-drawer { zoom: ' + z + '; }';
     };
     win.__nbedlApplyZoom();
     if (!win.__nbedlZoomBound) {
@@ -515,7 +555,10 @@ def apply_ui_zoom():
 
 
 apply_ui_zoom()
-render_manual_drawer()
+render_side_drawer("nbedl-manual-root", top_css="20%", grad_a="#ed542b", grad_b="#f68b21", accent="#ed542b",
+                   bookmark_label="📖 사용 설명서", panel_title="📖 NBEDL Exp Assistant 사용 설명서", content_html=MANUAL_HTML)
+render_side_drawer("nbedl-method-root", top_css="46%", grad_a="#0c8599", grad_b="#20c997", accent="#0c8599",
+                   bookmark_label="📊 분석 방법", panel_title="📊 분석 방법 · 모델과 원칙", content_html=METHODOLOGY_HTML)
 disable_form_enter_submit()
 
 # ==========================================
@@ -533,6 +576,10 @@ if "passive_vars" not in st.session_state:
     st.session_state.passive_vars = []
 if "df_data" not in st.session_state:
     st.session_state.df_data = pd.DataFrame()
+if "outlier_method" not in st.session_state:
+    st.session_state.outlier_method = "iqr"
+if "outlier_alpha" not in st.session_state:
+    st.session_state.outlier_alpha = 0.05
 
 # ==========================================
 # 5. 전처리 및 엑셀 로드 함수
@@ -560,26 +607,19 @@ def coerce_bool_col(series):
 
     return series.map(_conv).astype(bool)
 
-def process_robust_data(df, feature_cols, target_col):
+def process_robust_data(df, feature_cols, target_col, method="iqr", alpha=0.05):
     grouped = df.groupby(feature_cols)
     robust_X, robust_y = [], []
     for name, group in grouped:
         y_vals = group[target_col].tolist()
-        if len(y_vals) >= 3:
-            q1, q3 = np.percentile(y_vals, [25, 75])
-            iqr = q3 - q1
-            lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
-            valid_y = [y for y in y_vals if lower <= y <= upper]
-            if not valid_y: valid_y = y_vals
-        else:
-            valid_y = y_vals
+        valid_y = analysis.robust_reduce(y_vals, method, alpha)
         x_val = list(name) if isinstance(name, tuple) else [name]
         robust_X.append(x_val)
         robust_y.append(np.mean(valid_y))
     return robust_X, robust_y
 
-def process_robust_data_multi(df, feature_cols, target_cols):
-    """process_robust_data와 같은 이상치(IQR) 처리를 목표 지표 여러 개에 동시에 적용한다.
+def process_robust_data_multi(df, feature_cols, target_cols, method="iqr", alpha=0.05):
+    """process_robust_data와 같은 이상치 처리를 목표 지표 여러 개에 동시에 적용한다.
     같은 X(공정 조건)로 한 번만 그룹핑해서 목표별 강건 평균을 나란히 계산 — 다중목표 경로 전용."""
     grouped = df.groupby(feature_cols)
     robust_X, robust_Y = [], []
@@ -587,14 +627,7 @@ def process_robust_data_multi(df, feature_cols, target_cols):
         row_y = []
         for t_col in target_cols:
             y_vals = group[t_col].tolist()
-            if len(y_vals) >= 3:
-                q1, q3 = np.percentile(y_vals, [25, 75])
-                iqr = q3 - q1
-                lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
-                valid_y = [y for y in y_vals if lower <= y <= upper]
-                if not valid_y: valid_y = y_vals
-            else:
-                valid_y = y_vals
+            valid_y = analysis.robust_reduce(y_vals, method, alpha)
             row_y.append(np.mean(valid_y))
         x_val = list(name) if isinstance(name, tuple) else [name]
         robust_X.append(x_val)
@@ -749,7 +782,12 @@ def load_excel_data(uploaded_file):
 
     if 'Exp_Name' in df_meta.columns and pd.notna(df_meta.iloc[0]['Exp_Name']):
         st.session_state.exp_name = str(df_meta.iloc[0]['Exp_Name'])
-        
+
+    if "Outlier_Method" in df_meta.columns and pd.notna(df_meta.iloc[0]["Outlier_Method"]):
+        st.session_state.outlier_method = str(df_meta.iloc[0]["Outlier_Method"])
+    if "Outlier_Alpha" in df_meta.columns and pd.notna(df_meta.iloc[0]["Outlier_Alpha"]):
+        st.session_state.outlier_alpha = float(df_meta.iloc[0]["Outlier_Alpha"])
+
     p_vars_str = str(df_meta.iloc[0]['Passive_Vars'])
     if p_vars_str and p_vars_str != "nan":
         st.session_state.passive_vars = [v.strip() for v in p_vars_str.split(",")]
@@ -908,7 +946,9 @@ elif st.session_state.app_mode == "Dashboard":
         st.header("📂 데이터 관리 패널")
         meta_data = {
             "Exp_Name": [display_exp_name],
-            "Passive_Vars": [",".join(st.session_state.passive_vars)]
+            "Passive_Vars": [",".join(st.session_state.passive_vars)],
+            "Outlier_Method": [st.session_state.outlier_method],
+            "Outlier_Alpha": [st.session_state.outlier_alpha]
         }
         excel_bytes = build_excel_bytes(st.session_state.df_data, st.session_state.config_vars, st.session_state.target_vars, meta_data)
         file_name_export = f"{display_exp_name}_Data.xlsx"
@@ -922,7 +962,7 @@ elif st.session_state.app_mode == "Dashboard":
             st.session_state.clear()
             st.rerun()
 
-    tab1, tab2, tab3 = st.tabs(["📝 신규 실험 입력", "🗂️ 데이터베이스 관리", "🤖 AI 최적화 대시보드"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📝 신규 실험 입력", "🗂️ 데이터베이스 관리", "🔬 데이터 진단", "🤖 AI 최적화 대시보드"])
 
     with tab1:
         with st.container(border=True):
@@ -988,6 +1028,31 @@ elif st.session_state.app_mode == "Dashboard":
             render_data_manager(st.session_state.config_vars, st.session_state.target_vars, st.session_state.passive_vars)
 
     with tab3:
+        with st.container(border=True):
+            colored_header(label="🔬 이상치 판정 설정", description="이상치 판정 방법과 유의수준을 정합니다. 강건 평균·제외 목록·박스플롯에 함께 적용됩니다.", color_name="orange-70")
+            m, a = analysis.render_method_controls(st.session_state.outlier_method, st.session_state.outlier_alpha, key_prefix="diag")
+            st.session_state.outlier_method = m
+            st.session_state.outlier_alpha = a
+        with st.container(border=True):
+            colored_header(label="🚫 학습에서 제외된 데이터", description="현재 방법 기준으로 AI 학습에서 빠지는 데이터입니다.", color_name="orange-70")
+            render_excluded_expander(st.session_state.df_data, f_names, target_names_all, st.session_state.config_vars, include_range=False, key="diag", method=st.session_state.outlier_method, alpha=st.session_state.outlier_alpha)
+        with st.container(border=True):
+            colored_header(label="📦 반복 측정 분포 (박스플롯)", description="같은 조건 반복 측정의 분포와 이상치를 봅니다.", color_name="green-70")
+            analysis.render_boxplots(st.session_state.df_data, st.session_state.config_vars, st.session_state.target_vars, st.session_state.outlier_method, st.session_state.outlier_alpha, key_prefix="diagbox")
+        with st.container(border=True):
+            colored_header(label="📈 목표별 수렴 곡선", description="실험이 진행됨에 따라 각 목표가 어떻게 수렴하는지 봅니다. (학습 적용 데이터)", color_name="green-70")
+            _valid_conv = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
+            if len(_valid_conv) > 0:
+                for tv in st.session_state.target_vars:
+                    tn, td = tv["Name"], tv.get("Direction", "Maximize")
+                    if tn in _valid_conv.columns:
+                        cdata = _valid_conv[tn].expanding().max() if "Maximize" in td else _valid_conv[tn].expanding().min()
+                        st.caption(f"{tn} ({td})")
+                        st.line_chart(cdata, height=200)
+            else:
+                st.info("분석용 데이터가 입력되지 않았습니다.")
+
+    with tab4:
         if not target_names_all:
             st.warning("등록된 목표 지표가 없습니다. 사이드바의 '환경 설정으로 돌아가기'에서 목표 지표를 추가하세요.")
 
@@ -999,77 +1064,65 @@ elif st.session_state.app_mode == "Dashboard":
             t_label = f"{t_name}, {t_unit}" if t_unit else t_name
 
             valid_df = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
-            c1, c2 = st.columns([1.2, 1])
 
-            with c1:
-                with st.container(border=True):
-                    colored_header(label=f"📈 최적화 경향 곡선", description=f"실험이 진행됨에 따라 타겟 지표({t_label})의 수렴 상태를 보여줍니다.", color_name="green-70")
-                    if len(valid_df) > 0:
-                        chart_data = valid_df[t_name].expanding().max() if "Maximize" in t_dir else valid_df[t_name].expanding().min()
-                        st.line_chart(chart_data, height=350)
+            with st.container(border=True):
+                colored_header(label="🤖 베이지안 추천 차기 조건", description="가우시안 프로세스 알고리즘에 기반하여 제안된 3가지 최적 조건 셋입니다.", color_name="orange-70")
+                if st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
+                    if len(valid_df) < 2:
+                        st.warning("정밀 분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
                     else:
-                        st.info("분석용 데이터가 입력되지 않았습니다.")
+                        with st.spinner("알고리즘 연산 중..."):
+                            X_train, y_train = process_robust_data(valid_df, f_names, t_name, st.session_state.outlier_method, st.session_state.outlier_alpha)
+                            ai_spaces = []
+                            for var in st.session_state.config_vars:
+                                if "Real" in var["Type"]: ai_spaces.append(Real(var["Min"], var["Max"], name=var["Name"]))
+                                elif "Integer" in var["Type"]: ai_spaces.append(Integer(var["Min"], var["Max"], name=var["Name"]))
+                                elif "Categorical" in var["Type"]: ai_spaces.append(Categorical([o.strip() for o in var["Options"].split(",")], name=var["Name"]))
 
-            with c2:
-                with st.container(border=True):
-                    colored_header(label="🤖 베이지안 추천 차기 조건", description="가우시안 프로세스 알고리즘에 기반하여 제안된 3가지 최적 조건 셋입니다.", color_name="orange-70")
-                    render_excluded_expander(st.session_state.df_data, f_names, [t_name], st.session_state.config_vars, include_range=True, key="single")
-                    if st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
-                        if len(valid_df) < 2:
-                            st.warning("정밀 분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
+                            y_train_fit = [-val for val in y_train] if "Maximize" in t_dir else y_train
+
+                            X_train_safe = []
+                            y_train_fit_safe = []
+                            for i, point in enumerate(X_train):
+                                if all(ai_spaces[j].low <= val <= ai_spaces[j].high for j, val in enumerate(point)):
+                                    X_train_safe.append(point)
+                                    y_train_fit_safe.append(y_train_fit[i])
+
+                            # 유효 데이터가 전부 공정 변수 설정 범위(Min~Max) 밖이면 학습 데이터가
+                            # 텅 비어 skopt.Optimizer.tell()이 내부에서 np.argmin([])으로 죽는다 —
+                            # 계산 전에 걸러서 사용자에게 원인을 알려준다.
+                            next_points = None
+                            if X_train_safe:
+                                opt = Optimizer(dimensions=ai_spaces, base_estimator="GP", acq_func="EI", random_state=None)
+                                opt.tell(X_train_safe, y_train_fit_safe)
+                                next_points = opt.ask(n_points=3)
+
+                        if next_points is None:
+                            st.error("등록된 유효 데이터가 모두 공정 변수의 설정 범위(최소~최대값) 밖에 있어 계산할 수 없습니다. 환경 설정에서 범위를 확인하거나 데이터를 다시 확인하세요.")
                         else:
-                            with st.spinner("알고리즘 연산 중..."):
-                                X_train, y_train = process_robust_data(valid_df, f_names, t_name)
-                                ai_spaces = []
-                                for var in st.session_state.config_vars:
-                                    if "Real" in var["Type"]: ai_spaces.append(Real(var["Min"], var["Max"], name=var["Name"]))
-                                    elif "Integer" in var["Type"]: ai_spaces.append(Integer(var["Min"], var["Max"], name=var["Name"]))
-                                    elif "Categorical" in var["Type"]: ai_spaces.append(Categorical([o.strip() for o in var["Options"].split(",")], name=var["Name"]))
+                            # 목표 지표별로 직전 결과를 따로 기억한다 (다른 지표로 전환 후 재계산했을 때
+                            # 이전 지표의 결과와 잘못 비교되지 않도록).
+                            if "prev_next_points_by_target" not in st.session_state:
+                                st.session_state.prev_next_points_by_target = {}
+                            if st.session_state.prev_next_points_by_target.get(t_name) == next_points:
+                                st.info("💡 **AI 수렴 상태 판단:** 현재 입력된 데이터 풀 안에서 해당 지점이 가장 최적의 공정 조건 범위로 강력하게 매핑되었습니다.")
 
-                                y_train_fit = [-val for val in y_train] if "Maximize" in t_dir else y_train
+                            st.session_state.prev_next_points_by_target[t_name] = next_points
 
-                                X_train_safe = []
-                                y_train_fit_safe = []
-                                for i, point in enumerate(X_train):
-                                    if all(ai_spaces[j].low <= val <= ai_spaces[j].high for j, val in enumerate(point)):
-                                        X_train_safe.append(point)
-                                        y_train_fit_safe.append(y_train_fit[i])
+                            for i, points in enumerate(next_points):
+                                with st.container(border=True):
+                                    st.markdown(f"<h5 style='margin:0; font-weight: 800; color: #ed542b;'>실험 후보 {i+1}</h5>", unsafe_allow_html=True)
+                                    st.divider()
+                                    cols_rec = st.columns(len(f_names))
+                                    for idx, (var, val) in enumerate(zip(st.session_state.config_vars, points)):
+                                        unit_str = f" {var['Unit']}" if var.get("Unit") else ""
+                                        cols_rec[idx].metric(label=var["Name"], value=f"{round(val, 3)}{unit_str}")
+                                    style_metric_cards(background_color="transparent", border_left_color="#ed542b", border_color="transparent", box_shadow=False)
 
-                                # 유효 데이터가 전부 공정 변수 설정 범위(Min~Max) 밖이면 학습 데이터가
-                                # 텅 비어 skopt.Optimizer.tell()이 내부에서 np.argmin([])으로 죽는다 —
-                                # 계산 전에 걸러서 사용자에게 원인을 알려준다.
-                                next_points = None
-                                if X_train_safe:
-                                    opt = Optimizer(dimensions=ai_spaces, base_estimator="GP", acq_func="EI", random_state=None)
-                                    opt.tell(X_train_safe, y_train_fit_safe)
-                                    next_points = opt.ask(n_points=3)
-
-                            if next_points is None:
-                                st.error("등록된 유효 데이터가 모두 공정 변수의 설정 범위(최소~최대값) 밖에 있어 계산할 수 없습니다. 환경 설정에서 범위를 확인하거나 데이터를 다시 확인하세요.")
-                            else:
-                                # 목표 지표별로 직전 결과를 따로 기억한다 (다른 지표로 전환 후 재계산했을 때
-                                # 이전 지표의 결과와 잘못 비교되지 않도록).
-                                if "prev_next_points_by_target" not in st.session_state:
-                                    st.session_state.prev_next_points_by_target = {}
-                                if st.session_state.prev_next_points_by_target.get(t_name) == next_points:
-                                    st.info("💡 **AI 수렴 상태 판단:** 현재 입력된 데이터 풀 안에서 해당 지점이 가장 최적의 공정 조건 범위로 강력하게 매핑되었습니다.")
-
-                                st.session_state.prev_next_points_by_target[t_name] = next_points
-
-                                for i, points in enumerate(next_points):
-                                    with st.container(border=True):
-                                        st.markdown(f"<h5 style='margin:0; font-weight: 800; color: #ed542b;'>실험 후보 {i+1}</h5>", unsafe_allow_html=True)
-                                        st.divider()
-                                        cols_rec = st.columns(len(f_names))
-                                        for idx, (var, val) in enumerate(zip(st.session_state.config_vars, points)):
-                                            unit_str = f" {var['Unit']}" if var.get("Unit") else ""
-                                            cols_rec[idx].metric(label=var["Name"], value=f"{round(val, 3)}{unit_str}")
-                                        style_metric_cards(background_color="transparent", border_left_color="#ed542b", border_color="transparent", box_shadow=False)
-
-                                with st.expander("🔍 AI 연산 피팅 로그 데이터"):
-                                    debug_df = pd.DataFrame(X_train, columns=f_names)
-                                    debug_df[t_name] = y_train
-                                    st.dataframe(debug_df, use_container_width=True)
+                            with st.expander("🔍 AI 연산 피팅 로그 데이터"):
+                                debug_df = pd.DataFrame(X_train, columns=f_names)
+                                debug_df[t_name] = y_train
+                                st.dataframe(debug_df, use_container_width=True)
 
         else:
             # ---- 목표 지표 2개 이상: 다중목표 베이지안 최적화 (MOBO, qNEHVI/BoTorch) ----
@@ -1081,66 +1134,49 @@ elif st.session_state.app_mode == "Dashboard":
             st.info(f"🎯 다중 목표 동시 최적화 (파레토 최적) — 등록된 {len(target_names_all)}개 지표를 함께 고려합니다: {target_labels}")
 
             valid_df = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
-            c1, c2 = st.columns([1.2, 1])
 
-            with c1:
-                with st.container(border=True):
-                    colored_header(label="📈 목표별 수렴 곡선", description="각 목표 지표가 실험이 진행됨에 따라 어떻게 수렴하는지 보여줍니다.", color_name="green-70")
-                    if len(valid_df) > 0:
-                        for tv in st.session_state.target_vars:
-                            tn, td = tv["Name"], tv["Direction"]
-                            unit_str = f", {tv['Unit']}" if tv.get("Unit") else ""
-                            if tn in valid_df.columns:
-                                cdata = valid_df[tn].expanding().max() if "Maximize" in td else valid_df[tn].expanding().min()
-                                st.caption(f"{tn} ({td}{unit_str})")
-                                st.line_chart(cdata, height=160)
+            with st.container(border=True):
+                colored_header(label="🤖 파레토 최적 후보 (MOBO)", description="qNEHVI 알고리즘으로 여러 목표를 동시에 개선할 다음 실험 후보를 제안합니다.", color_name="orange-70")
+                if not _BOTORCH_AVAILABLE:
+                    st.error("다중 목표 최적화에는 `botorch` 패키지가 필요합니다. `pip install botorch`로 설치한 뒤 앱을 다시 시작하세요.")
+                elif st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
+                    if len(valid_df) < 2:
+                        st.warning("정밀 분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
                     else:
-                        st.info("분석용 데이터가 입력되지 않았습니다.")
+                        with st.spinner("다중목표 알고리즘 연산 중..."):
+                            X_train, Y_train = process_robust_data_multi(valid_df, f_names, target_names_all, st.session_state.outlier_method, st.session_state.outlier_alpha)
+                            directions = [tv["Direction"] for tv in st.session_state.target_vars]
+                            mobo_error = None
+                            try:
+                                candidates, predicted_Y = run_mobo(
+                                    X_train, Y_train, st.session_state.config_vars, directions, n_candidates=3
+                                )
+                            except Exception as e:
+                                candidates, predicted_Y = None, None
+                                mobo_error = str(e)
 
-            with c2:
-                with st.container(border=True):
-                    colored_header(label="🤖 파레토 최적 후보 (MOBO)", description="qNEHVI 알고리즘으로 여러 목표를 동시에 개선할 다음 실험 후보를 제안합니다.", color_name="orange-70")
-                    render_excluded_expander(st.session_state.df_data, f_names, target_names_all, st.session_state.config_vars, include_range=False, key="multi")
-                    if not _BOTORCH_AVAILABLE:
-                        st.error("다중 목표 최적화에는 `botorch` 패키지가 필요합니다. `pip install botorch`로 설치한 뒤 앱을 다시 시작하세요.")
-                    elif st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
-                        if len(valid_df) < 2:
-                            st.warning("정밀 분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
+                        if mobo_error:
+                            st.error(f"다중목표 계산 중 오류가 발생했습니다: {mobo_error}")
                         else:
-                            with st.spinner("다중목표 알고리즘 연산 중..."):
-                                X_train, Y_train = process_robust_data_multi(valid_df, f_names, target_names_all)
-                                directions = [tv["Direction"] for tv in st.session_state.target_vars]
-                                mobo_error = None
-                                try:
-                                    candidates, predicted_Y = run_mobo(
-                                        X_train, Y_train, st.session_state.config_vars, directions, n_candidates=3
+                            if st.session_state.get("prev_mobo_points") == candidates:
+                                st.info("💡 **AI 수렴 상태 판단:** 현재 데이터 풀 안에서 파레토 최적 후보가 안정적으로 수렴했습니다.")
+                            st.session_state.prev_mobo_points = candidates
+
+                            for i, (point, pred) in enumerate(zip(candidates, predicted_Y)):
+                                with st.container(border=True):
+                                    st.markdown(f"<h5 style='margin:0; font-weight: 800; color: #ed542b;'>실험 후보 {i+1}</h5>", unsafe_allow_html=True)
+                                    st.divider()
+                                    cols_rec = st.columns(len(f_names))
+                                    for idx, (var, val) in enumerate(zip(st.session_state.config_vars, point)):
+                                        unit_str = f" {var['Unit']}" if var.get("Unit") else ""
+                                        disp_val = f"{round(val, 3)}{unit_str}" if isinstance(val, float) else f"{val}{unit_str}"
+                                        cols_rec[idx].metric(label=var["Name"], value=disp_val)
+                                    style_metric_cards(background_color="transparent", border_left_color="#ed542b", border_color="transparent", box_shadow=False)
+                                    pred_str = " · ".join(
+                                        f"{tv['Name']} ≈ {p:.6f}{' ' + tv['Unit'] if tv.get('Unit') else ''}"
+                                        for tv, p in zip(st.session_state.target_vars, pred)
                                     )
-                                except Exception as e:
-                                    candidates, predicted_Y = None, None
-                                    mobo_error = str(e)
-
-                            if mobo_error:
-                                st.error(f"다중목표 계산 중 오류가 발생했습니다: {mobo_error}")
-                            else:
-                                if st.session_state.get("prev_mobo_points") == candidates:
-                                    st.info("💡 **AI 수렴 상태 판단:** 현재 데이터 풀 안에서 파레토 최적 후보가 안정적으로 수렴했습니다.")
-                                st.session_state.prev_mobo_points = candidates
-
-                                for i, (point, pred) in enumerate(zip(candidates, predicted_Y)):
-                                    with st.container(border=True):
-                                        st.markdown(f"<h5 style='margin:0; font-weight: 800; color: #ed542b;'>실험 후보 {i+1}</h5>", unsafe_allow_html=True)
-                                        st.divider()
-                                        cols_rec = st.columns(len(f_names))
-                                        for idx, (var, val) in enumerate(zip(st.session_state.config_vars, point)):
-                                            unit_str = f" {var['Unit']}" if var.get("Unit") else ""
-                                            disp_val = f"{round(val, 3)}{unit_str}" if isinstance(val, float) else f"{val}{unit_str}"
-                                            cols_rec[idx].metric(label=var["Name"], value=disp_val)
-                                        style_metric_cards(background_color="transparent", border_left_color="#ed542b", border_color="transparent", box_shadow=False)
-                                        pred_str = " · ".join(
-                                            f"{tv['Name']} ≈ {p:.6f}{' ' + tv['Unit'] if tv.get('Unit') else ''}"
-                                            for tv, p in zip(st.session_state.target_vars, pred)
-                                        )
-                                        st.caption(f"예측 목표값: {pred_str}")
+                                    st.caption(f"예측 목표값: {pred_str}")
         # ---- 공정 변수별 목표 지표 분포 (Origin 스타일) ----
         st.divider()
         with st.container(border=True):

@@ -6,6 +6,7 @@ st.session_state.df_data 를 유일한 진실로 두고, 필터된 뷰에서 편
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -23,7 +24,7 @@ def _distinct_values(series):
 def _render_summary(df, config_vars, target_vars, cfg_names):
     """요약 통계 + 목표별 '최적 조건'. 최고 raw 값은 이상치일 수 있으므로 학습 적용
     데이터(수동 제외분 반영) 기준으로, 목표 방향(Max/Min)에 맞는 최적 조건을 보여준다."""
-    with st.expander("📊 요약 통계 · 목표별 최적 조건", expanded=False):
+    with st.expander("📊 요약 통계 · 종합 최적 조건", expanded=False):
         valid = df[df["학습_적용"] == True] if "학습_적용" in df.columns else df  # noqa: E712
         st.caption(f"학습 적용 {len(valid)}행 / 전체 {len(df)}행 기준")
 
@@ -40,27 +41,80 @@ def _render_summary(df, config_vars, target_vars, cfg_names):
         if valid.empty:
             st.caption("학습 적용된 데이터가 없어 최적 조건을 계산할 수 없습니다.")
             return
-        for tv in target_vars:
-            tn = tv.get("Name")
-            if not tn or tn not in valid.columns:
-                continue
-            col = pd.to_numeric(valid[tn], errors="coerce")
-            if col.dropna().empty:
-                continue
-            direction = tv.get("Direction", "Maximize")
-            is_max = "Maximize" in direction
-            idx = col.idxmax() if is_max else col.idxmin()
-            best = col.loc[idx]
-            unit = f" {tv['Unit']}" if tv.get("Unit") else ""
-            cond = " · ".join(f"{n}={valid.loc[idx, n]}" for n in cfg_names)
-            sample = valid.loc[idx, "샘플명"] if "샘플명" in valid.columns else ""
-            arrow = "최대" if is_max else "최소"
-            line = f"**🎯 {tn}** ({arrow}) 최적 **{best:.6g}{unit}**"
-            if cond:
-                line += f"  ·  조건: {cond}"
+
+        tgts = [tv for tv in target_vars
+                if tv.get("Name") and tv["Name"] in valid.columns
+                and pd.to_numeric(valid[tv["Name"]], errors="coerce").notna().any()]
+        if not tgts:
+            st.caption("유효한 목표 지표 데이터가 없어 최적 조건을 계산할 수 없습니다.")
+            return
+
+        # 여러 목표의 trade-off 를 함께 고려한 '종합 최적 조건' 하나를 고른다.
+        # 각 목표를 방향(최대화/최소화)에 맞춰 0~1 로 정규화(최선=1)한 desirability 점수를 만들고,
+        # 목표 점수의 평균이 가장 높은 실험 조건을 뽑는다 — 한 목표만 뛰어나고 나머지가 나쁜 조건은
+        # 평균이 낮아 밀리고, 전체적으로 균형 잡힌(파레토상 타협점에 가까운) 조건이 선택된다.
+        score_df = pd.DataFrame(index=valid.index)
+        for tv in tgts:
+            col = pd.to_numeric(valid[tv["Name"]], errors="coerce")
+            lo, hi = col.min(), col.max()
+            if not np.isfinite(lo) or not np.isfinite(hi) or hi == lo:
+                norm = pd.Series(0.5, index=valid.index)  # 상수/단일 목표값은 중립 처리
+            else:
+                norm = (col - lo) / (hi - lo)
+            if "Minimize" in tv.get("Direction", "Maximize"):
+                norm = 1.0 - norm  # 최소화 목표는 낮을수록 좋으므로 점수를 뒤집는다
+            score_df[tv["Name"]] = norm
+
+        # 목표 가중치 — 기본은 모두 1(동일). 고급 옵션을 켜면 특정 목표를 더 중시할 수 있다.
+        weights = {tv["Name"]: 1.0 for tv in tgts}
+        if len(tgts) >= 2:
+            adv = st.checkbox("⚙️ 목표별 가중치 조정 (고급)", key="dm_weight_adv",
+                              help="기본은 모든 목표 동일 가중입니다. 특정 목표를 더 중시하려면 켜고 값을 올리세요.")
+            if adv:
+                wcols = st.columns(min(len(tgts), 4))
+                for i, tv in enumerate(tgts):
+                    weights[tv["Name"]] = wcols[i % len(wcols)].number_input(
+                        f"{tv['Name']} 가중치", min_value=0.0, value=1.0, step=0.1,
+                        key=f"dm_w_{tv['Name']}")
+
+        # 가중 평균 desirability. 행마다 값이 있는 목표들만으로 정규화(NaN 목표는 건너뜀).
+        cols = [tv["Name"] for tv in tgts]
+        w = np.array([weights[c] for c in cols], dtype=float)
+        if w.sum() <= 0:
+            w = np.ones(len(cols))  # 전부 0 이면 동일 가중으로 폴백
+        S = score_df[cols].to_numpy(dtype=float)
+        present = ~np.isnan(S)
+        wsum = np.where(present, w[np.newaxis, :], 0.0).sum(axis=1)
+        num = np.where(present, np.nan_to_num(S) * w[np.newaxis, :], 0.0).sum(axis=1)
+        comp_vals = np.where(wsum > 0, num / np.where(wsum > 0, wsum, 1.0), np.nan)
+        composite = pd.Series(comp_vals, index=valid.index)
+        if composite.dropna().empty:
+            st.caption("종합 점수를 계산할 수 없습니다.")
+            return
+        best_idx = composite.idxmax()
+        custom_w = any(abs(weights[c] - weights[cols[0]]) > 1e-9 for c in cols)
+
+        cond = " · ".join(f"{n}={valid.loc[best_idx, n]}" for n in cfg_names)
+        sample = valid.loc[best_idx, "샘플명"] if "샘플명" in valid.columns else ""
+        target_names = ", ".join(
+            f"{tv['Name']}({'↑' if 'Maximize' in tv.get('Direction', 'Maximize') else '↓'}"
+            + (f"×{weights[tv['Name']]:g}" if custom_w else "") + ")" for tv in tgts)
+        w_note = " · 가중치 적용됨" if custom_w else ""
+        st.markdown(f"**🎯 종합 최적 조건** — 모든 목표({target_names})의 방향·trade-off 를 함께 고려한 균형점{w_note}")
+        if cond:
+            line = f"- 조건: **{cond}**"
             if isinstance(sample, str) and sample.strip():
                 line += f"  ·  샘플: {sample}"
             st.markdown(line)
+        vals = []
+        for tv in tgts:
+            v = pd.to_numeric(valid[tv["Name"]], errors="coerce").loc[best_idx]
+            unit = f" {tv['Unit']}" if tv.get("Unit") else ""
+            arrow = "↑" if "Maximize" in tv.get("Direction", "Maximize") else "↓"
+            vals.append(f"{tv['Name']}{arrow} {v:.6g}{unit}")
+        st.markdown(f"- 그 조건의 목표값: {' · '.join(vals)}  ·  종합점수 **{composite.loc[best_idx]:.3f}** / 1")
+        st.caption("각 목표를 방향에 맞춰 0~1(최선=1)로 정규화한 desirability 의 평균이 최대인 실험 조건입니다. "
+                   "여러 목표가 상충할 때 한쪽으로 치우치지 않은 균형 조건을 고릅니다.")
 
 
 def render_data_manager(config_vars, target_vars, passive_vars):
