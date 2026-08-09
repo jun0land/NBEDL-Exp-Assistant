@@ -369,6 +369,11 @@ METHODOLOGY_HTML = """
 
 <h4>⑦ 정규화 &amp; 종합 최적 조건</h4>
 <p>여러 목표를 한 그래프에 겹칠 때 각 목표를 <b>min–max로 0~1 정규화</b>합니다. "종합 최적 조건"은 각 목표를 방향(최대화/최소화)에 맞춰 0~1로 만든 <b>desirability</b>의 (가중)평균이 가장 높은 실험 조건 — 한쪽으로 치우치지 않은 trade-off 균형점을 고릅니다.</p>
+
+<h4>⑧ 공정 변수의 상관(다중공선성)과 조건 슬라이스</h4>
+<p>실험에서는 공정 변수들이 서로 <b>독립이 아니라 상관</b>되기 쉽습니다(예: 온도를 올리면 반응이 빨라져 시간도 함께 조절하게 됨). 통계적으로 입력 변수끼리 상관이 크면 <b>다중공선성</b>이라 하고, "목표 vs 변수 하나" 그래프에서 다른 변수들이 같이 움직여 <b>어느 변수의 효과인지 뒤섞이는 교란(confounding)</b>이 생깁니다.</p>
+<p>실험 특성상 상관 자체는 피하기 어렵습니다. 그래서 공정 변수별 그래프의 <b>"🎛️ 다른 변수 고정 (조건 슬라이스)"</b>로 <b>나머지 변수를 좁은 범위/특정 값에 고정</b>한 채 한 변수만 훑어봅니다 — 다른 조건이 비슷한 점끼리만 비교해 그 변수의 효과를 더 또렷하게 봅니다. 각 그래프는 자기 X축 변수만 자유롭게 두고 나머지 제약을 적용합니다.</p>
+<p class="nbedl-tip">범위를 좁힐수록 교란은 줄지만 남는 점이 적어져 노이즈에 민감해집니다. 조금씩 넓혀 가며 균형을 찾으세요. (근본 해결은 실험 설계 단계에서 변수를 직교화하는 것)</p>
 """
 
 DRAWER_CSS_TMPL = """
@@ -1037,8 +1042,9 @@ elif st.session_state.app_mode == "Dashboard":
             colored_header(label="🚫 학습에서 제외된 데이터", description="현재 방법 기준으로 AI 학습에서 빠지는 데이터입니다.", color_name="orange-70")
             render_excluded_expander(st.session_state.df_data, f_names, target_names_all, st.session_state.config_vars, include_range=False, key="diag", method=st.session_state.outlier_method, alpha=st.session_state.outlier_alpha)
         with st.container(border=True):
-            colored_header(label="📦 반복 측정 분포 (박스플롯)", description="같은 조건 반복 측정의 분포와 이상치를 봅니다.", color_name="green-70")
-            analysis.render_boxplots(st.session_state.df_data, st.session_state.config_vars, st.session_state.target_vars, st.session_state.outlier_method, st.session_state.outlier_alpha, key_prefix="diagbox")
+            colored_header(label="📦 반복 측정 분포 (박스플롯)", description="같은 조건 반복 측정의 분포와 이상치를 봅니다. (학습 적용 데이터만 — 데이터베이스 관리에서 체크 해제한 행은 빠집니다)", color_name="green-70")
+            _valid_box = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
+            analysis.render_boxplots(_valid_box, st.session_state.config_vars, st.session_state.target_vars, st.session_state.outlier_method, st.session_state.outlier_alpha, key_prefix="diagbox")
         with st.container(border=True):
             colored_header(label="📈 목표별 수렴 곡선", description="실험이 진행됨에 따라 각 목표가 어떻게 수렴하는지 봅니다. (학습 적용 데이터)", color_name="green-70")
             _valid_conv = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
