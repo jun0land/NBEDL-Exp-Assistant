@@ -23,8 +23,9 @@ import streamlit as st
 
 MIN_GROUP = 3  # 이 개수 미만이면 이상치 판정 안 함 (통계적으로 무의미)
 
-# (key, 화면 라벨). 순서가 셀렉트박스 순서.
+# (key, 화면 라벨). 순서가 셀렉트박스 순서. "auto"는 데이터에 맞춰 아래 방법 중 하나를 자동 선택.
 OUTLIER_METHODS = [
+    ("auto", "자동 추천 (데이터에 맞춤)"),
     ("iqr", "IQR / 박스플롯 (1.5×IQR)"),
     ("zscore", "Z-점수 (|z| > 3)"),
     ("mad", "수정된 Z-점수 · MAD (> 3.5)"),
@@ -42,6 +43,48 @@ def method_label(method):
 def method_uses_alpha(method):
     """유의수준 α 가 의미 있는 방법인지 (현재 ESD 만)."""
     return method == "esd"
+
+
+def group_sizes(df, feature_cols):
+    """완전히 같은 조건(모든 공정 변수 일치) 그룹들의 크기 리스트."""
+    feats = [c for c in feature_cols if c in df.columns]
+    if df is None or df.empty or not feats:
+        return []
+    return df.groupby(feats, dropna=False).size().tolist()
+
+
+def recommend_method(df, feature_cols):
+    """반복(완전 동일 조건) 그룹 크기에 맞춰 이상치 방법을 추천한다. (method_key, reason) 반환.
+
+    공정 변수가 많을수록 조건이 잘게 쪼개져 반복 수가 작아지므로, 변수 개수를 간접적으로 반영하되
+    실제 반복 그룹 크기를 직접 보고 정하는 게 정확하다.
+      - 판정 가능한(n>=3) 그룹이 없으면 → 없음
+      - 대표 반복 수 n<=4 (소표본): IQR은 거의 못 잡고 MAD는 동일값 있으면 실패 → ESD
+      - n 5~9 (소·중): 유의수준으로 조절되는 ESD
+      - n>=10 (충분): 사분위가 안정적인 IQR
+    """
+    sizes = group_sizes(df, feature_cols)
+    judge = [s for s in sizes if s >= MIN_GROUP]
+    if not judge:
+        return "none", ("완전히 같은 조건을 3회 이상 반복한 그룹이 없어 통계적 이상치 판정이 불가합니다. "
+                        "같은 조건을 3회 이상 반복하면 판정할 수 있습니다.")
+    n_typ = int(np.median(judge))
+    if n_typ <= 4:
+        return "esd", (f"조건당 반복이 대개 {n_typ}회인 소표본입니다. 이 구간에선 IQR은 거의 못 잡고"
+                       f"(삼반복이면 사분위가 튀는 값 쪽으로 끌려감), 동일값이 있으면 MAD도 0이 되어 실패합니다. "
+                       f"소표본용 정식 검정인 ESD를 추천합니다.")
+    if n_typ <= 9:
+        return "esd", (f"조건당 반복이 대개 {n_typ}회입니다. 소·중 표본에 적합하고 유의수준(α)으로 민감도를 "
+                       f"조절할 수 있는 ESD를 추천합니다.")
+    return "iqr", (f"조건당 반복이 대개 {n_typ}회로 충분합니다. 사분위(박스플롯) 기준이 안정적으로 동작하는 "
+                   f"구간이라 가장 널리 쓰는 IQR을 추천합니다.")
+
+
+def resolve_method(method, df, feature_cols):
+    """'auto'면 데이터 기반 추천 방법(concrete)으로 바꿔 반환. 그 외엔 그대로."""
+    if method == "auto":
+        return recommend_method(df, feature_cols)[0]
+    return method
 
 
 # ---------------------------------------------------------------------------
@@ -151,14 +194,24 @@ def robust_reduce(values, method="iqr", alpha=0.05):
 _ALPHA_PRESETS = {"0.05 (기본)": 0.05, "0.01 (엄격)": 0.01, "직접 입력": None}
 
 
-def render_method_controls(method, alpha, *, key_prefix="outlier"):
-    """이상치 방법 + α 선택 위젯. (method, alpha) 를 반환 — 호출부가 세션/파일에 저장한다."""
+def render_method_controls(method, alpha, df, feature_cols, *, key_prefix="outlier"):
+    """이상치 방법 + α 선택 위젯. 현재 데이터에 맞는 추천을 함께 보여준다.
+    (method, alpha) 를 반환 — method 는 사용자가 고른 값('auto' 가능), 호출부가 세션/파일에 저장한다.
+    실제 적용 방법은 resolve_method(method, df, feature_cols) 로 확정한다."""
     c1, c2 = st.columns([1.4, 1])
     idx = _METHOD_KEYS.index(method) if method in _METHOD_KEYS else 0
     sel = c1.selectbox("이상치 판정 방법", _METHOD_KEYS, index=idx,
                        format_func=method_label, key=f"{key_prefix}_method")
+
+    rec, reason = recommend_method(df, feature_cols)
+    effective = rec if sel == "auto" else sel   # α 컨트롤 노출 판단에 실제 적용 방법을 쓴다
+    if sel == "auto":
+        st.caption(f"🔍 **자동 추천 적용 → {method_label(rec)}**. {reason}")
+    else:
+        st.caption(f"💡 이 데이터엔 **{method_label(rec)}** 추천 — {reason}")
+
     out_alpha = float(alpha)
-    if method_uses_alpha(sel):
+    if method_uses_alpha(effective):
         preset_keys = list(_ALPHA_PRESETS)
         # 현재 α 가 프리셋과 다르면 '직접 입력'을 기본 선택
         cur = "직접 입력"
@@ -185,45 +238,71 @@ def render_method_controls(method, alpha, *, key_prefix="outlier"):
 # ---------------------------------------------------------------------------
 # 박스플롯 (반복 측정 분포 + 이상치)
 # ---------------------------------------------------------------------------
+def _cond_label(name, n):
+    """조건 그룹 라벨: 모든 공정변수 값 조합 + 반복 수 n."""
+    vals = name if isinstance(name, tuple) else (name,)
+    return "·".join(str(v) for v in vals) + f" (n={n})"
+
+
 def render_boxplots(df, config_vars, target_vars, method, alpha, *, key_prefix="box"):
-    """선택한 공정 변수로 그룹을 나눠, 목표별 값 분포를 박스플롯으로. 현재 방법이 이상치로
-    지목한 점은 빨강, 나머지는 검정으로 겹쳐 그린다."""
+    """완전히 같은 조건(모든 공정 변수 일치)끼리 묶어 목표별 분포를 박스플롯으로 그린다.
+    각 박스 = 한 조건의 반복값들. 빨간 점 = 현재 방법이 그 조건 안에서 이상치로 판정한 값
+    (= AI 학습에서 실제로 제외되는 값)이라, 박스플롯이 AI가 보는 그대로가 된다.
+
+    이상치 판정은 항상 '완전 동일 조건' 그룹 단위 — X축을 변수 하나로만 묶던 이전 방식과 달리
+    조건을 섞지 않는다."""
     cvars = [v["Name"] for v in config_vars if v.get("Name") and v["Name"] in df.columns]
     targets = [tv for tv in target_vars if tv.get("Name") and tv["Name"] in df.columns]
     if df.empty or not cvars or not targets:
         st.info("데이터·공정 변수·목표 지표가 있어야 박스플롯을 그립니다.")
         return
 
-    gvar = st.selectbox("그룹 기준 (X축) 공정 변수", cvars, key=f"{key_prefix}_gvar")
-    st.caption(f"같은 '{gvar}' 값끼리 묶어 분포를 봅니다. 빨간 점 = 현재 방법"
-               f"({method_label(method)})이 이상치로 판정한 값.")
+    tnames = [tv["Name"] for tv in targets]
+    sel_targets = st.multiselect(
+        "표시할 목표 지표", tnames, default=tnames[:min(3, len(tnames))],
+        key=f"{key_prefix}_targets",
+        help="목표가 많으면 보고 싶은 것만 고르세요. 한 번에 너무 많이 그리면 느려집니다.")
+    if not sel_targets:
+        st.info("표시할 목표 지표를 하나 이상 선택하세요.")
+        return
 
-    for tv in targets:
-        tn = tv["Name"]
-        unit = f" ({tv['Unit']})" if tv.get("Unit") else ""
-        y_all = pd.to_numeric(df[tn], errors="coerce")
-        gser = df[gvar].astype(str)
+    st.caption(f"'완전히 같은 조건(모든 공정 변수 일치)'끼리 묶은 박스입니다 · "
+               f"빨간 점 = 현재 방법({method_label(method)})이 그 조건 안에서 이상치로 판정한 값"
+               f"(= AI 학습에서 제외) · n = 그 조건의 반복 수(3 미만은 판정 불가).")
 
+    grouped = list(df.groupby(cvars, dropna=False))
+
+    for tn in sel_targets:
+        tvu = next((t for t in targets if t["Name"] == tn), {})
+        unit = f" ({tvu.get('Unit')})" if tvu.get("Unit") else ""
         fig = go.Figure()
-        fig.add_trace(go.Box(x=gser, y=y_all, name=tn, boxpoints=False,
-                             line=dict(color="#1a1a1a"), fillcolor="rgba(237,84,43,0.12)"))
-        # 그룹별로 이상치 마스크를 계산해 점을 겹쳐 찍는다
-        for gval, g in df.groupby(gvar):
+        n_cond = 0
+        for name, g in grouped:
             yv = pd.to_numeric(g[tn], errors="coerce").to_numpy(dtype=float)
+            yv = yv[np.isfinite(yv)]
+            if len(yv) == 0:
+                continue
+            n_cond += 1
+            lab = _cond_label(name, len(yv))
             m = outlier_mask(yv, method, alpha)
             colors = ["#FF0000" if o else "#333333" for o in m]
+            fig.add_trace(go.Box(x=[lab] * len(yv), y=yv, name=lab, boxpoints=False,
+                                 line=dict(color="#1a1a1a"), fillcolor="rgba(237,84,43,0.10)",
+                                 showlegend=False))
             fig.add_trace(go.Scatter(
-                x=[str(gval)] * len(yv), y=yv, mode="markers",
+                x=[lab] * len(yv), y=yv, mode="markers",
                 marker=dict(color=colors, size=8, line=dict(width=0)),
-                showlegend=False, hovertemplate=f"{gvar}={gval}<br>{tn}: %{{y:.6g}}<extra></extra>",
-            ))
+                showlegend=False, hovertemplate=f"{lab}<br>{tn}: %{{y:.6g}}<extra></extra>"))
+        if n_cond == 0:
+            continue
         fig.update_layout(
             template="simple_white", plot_bgcolor="white", paper_bgcolor="white",
             font=dict(family="Myriad Pro, Pretendard, sans-serif", color="black"),
-            title=dict(text=f"{tn}{unit}", font=dict(size=16)),
-            xaxis=dict(title=gvar, showline=True, linecolor="black", mirror=True, ticks="inside"),
+            title=dict(text=f"{tn}{unit}  ·  조건 {n_cond}개", font=dict(size=15)),
+            xaxis=dict(title="공정 조건 (모든 변수 일치)", showline=True, linecolor="black",
+                       mirror=True, ticks="inside", tickangle=-40, automargin=True),
             yaxis=dict(title=tn, showline=True, linecolor="black", mirror=True, ticks="inside"),
-            showlegend=False, height=360, margin=dict(l=60, r=20, t=40, b=50),
+            showlegend=False, height=420, margin=dict(l=60, r=20, t=44, b=90),
         )
         st.plotly_chart(fig, use_container_width=True,
                         key=f"{key_prefix}_{tn}", config={"displaylogo": False})

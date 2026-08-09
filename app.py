@@ -342,15 +342,17 @@ METHODOLOGY_HTML = """
 <p>이 앱이 쓰는 분석 모델과 원칙을 정리했습니다. 모든 계산은 <b>학습 적용된 데이터</b>만 사용합니다.</p>
 
 <h4>① 이상치 처리 (반복 측정)</h4>
-<p><b>완전히 같은 공정 조건</b>을 여러 번 측정한 그룹 안에서만 이상치를 판정합니다. 조건이 조금이라도 다르면 다른 그룹이라 서로 비교하지 않습니다. 그룹 크기가 <b>3 미만이면 판정하지 않고</b>, 통계적으로는 5회 이상 반복해야 잘 잡힙니다. "🔬 데이터 진단" 탭에서 방법을 고릅니다.</p>
+<p><b>완전히 같은 공정 조건</b>(모든 공정 변수가 일치)을 여러 번 측정한 그룹 안에서만 이상치를 판정합니다. 조건이 조금이라도 다르면 다른 그룹이라 서로 비교하지 않습니다. 그룹의 반복 수 <b>n이 3 미만이면 판정하지 않습니다</b>(통계적으로 무의미). "🔬 데이터 진단" 탭에서 방법을 고르며, <b>"자동 추천"</b>을 선택하면 데이터의 반복 수에 맞춰 아래에서 자동으로 골라 줍니다.</p>
+<p><b>방법별 이상적 사용 조건 (반복 수 n 기준)</b></p>
 <ul>
-  <li><b>없음</b> — 제거하지 않고 반복값 전부 사용</li>
-  <li><b>IQR / 박스플롯</b> — Tukey 울타리, Q1−1.5·IQR ~ Q3+1.5·IQR 밖. 분포 가정이 없어 무난(기본값)</li>
-  <li><b>Z-점수</b> — 평균·표준편차 기반 |z|&gt;3. 정규분포 가정. 이상치가 표준편차를 부풀려 스스로를 가리는 약점</li>
-  <li><b>수정된 Z-점수 (MAD)</b> — 중앙값·중앙값절대편차 기반 |M|&gt;3.5. 소표본·치우침에 강건</li>
-  <li><b>ESD (일반화 극단 스튜던트화 편차, Rosner)</b> — 유의수준 α로 여러 이상치를 순차 검정</li>
+  <li><b>없음</b> — n&lt;3(반복 부족)이거나 이상치를 빼고 싶지 않을 때</li>
+  <li><b>ESD (Rosner)</b> — <b>n ≈ 3~수십</b>. 정규 근사 가정의 정식 검정으로 <b>소표본(삼반복 등)에서 가장 실용적</b>. 유의수준 α로 민감도 조절</li>
+  <li><b>수정 Z-점수 (MAD)</b> — <b>n ≳ 5</b>, 비정규·치우친 분포에 강건. 단 <b>동일값이 절반 이상이면 MAD=0</b>이 되어 무력(삼반복에 취약)</li>
+  <li><b>IQR / 박스플롯</b> — <b>n ≳ 10</b> 권장. 사분위가 안정적일 때의 표준, 분포 가정 없음. <b>n=3에선 거의 못 잡음</b></li>
+  <li><b>Z-점수</b> — <b>n ≳ 30 &amp; 정규분포</b>. 소표본에선 이상치가 표준편차를 부풀려 스스로를 가리는 마스킹으로 실패</li>
 </ul>
-<p class="nbedl-tip">이상치 판정에 절대적 정답은 없습니다. 방법마다 결과가 달라질 수 있어 데이터 성격에 맞게 고르세요.</p>
+<p><b>자동 추천 규칙:</b> 반복 그룹의 대표 크기(중앙값)를 보고 — n&lt;3 → 없음 · n≤4 → ESD · n 5~9 → ESD · n≥10 → IQR. 공정 변수가 많을수록 같은 조건 반복이 잘게 쪼개져 n이 작아지므로, 변수 수보다 실제 반복 수를 직접 봅니다.</p>
+<p class="nbedl-tip">이상치 판정에 절대적 정답은 없습니다. 방법마다 결과가 달라질 수 있어 데이터 성격에 맞게 고르세요 — 그래서 데이터에 맞춘 자동 추천을 기본으로 둡니다.</p>
 
 <h4>② 유의수준 α (ESD 전용)</h4>
 <p>ESD는 α로 민감도를 조절합니다. <b>α가 클수록 이상치를 더 많이 제거</b>해 학습 데이터가 줄어듭니다. 기본 0.05, 프리셋 0.01, 직접 입력 가능하며 <b>Excel 파일에 저장</b>되어 재업로드 시 복원됩니다. (IQR·Z·MAD는 α 대신 관례 상수 1.5×·3·3.5 사용)</p>
@@ -582,7 +584,7 @@ if "passive_vars" not in st.session_state:
 if "df_data" not in st.session_state:
     st.session_state.df_data = pd.DataFrame()
 if "outlier_method" not in st.session_state:
-    st.session_state.outlier_method = "iqr"
+    st.session_state.outlier_method = "auto"
 if "outlier_alpha" not in st.session_state:
     st.session_state.outlier_alpha = 0.05
 
@@ -1035,16 +1037,17 @@ elif st.session_state.app_mode == "Dashboard":
     with tab3:
         with st.container(border=True):
             colored_header(label="🔬 이상치 판정 설정", description="이상치 판정 방법과 유의수준을 정합니다. 강건 평균·제외 목록·박스플롯에 함께 적용됩니다.", color_name="orange-70")
-            m, a = analysis.render_method_controls(st.session_state.outlier_method, st.session_state.outlier_alpha, key_prefix="diag")
+            m, a = analysis.render_method_controls(st.session_state.outlier_method, st.session_state.outlier_alpha, st.session_state.df_data, f_names, key_prefix="diag")
             st.session_state.outlier_method = m
             st.session_state.outlier_alpha = a
+            eff_method = analysis.resolve_method(m, st.session_state.df_data, f_names)
         with st.container(border=True):
             colored_header(label="🚫 학습에서 제외된 데이터", description="현재 방법 기준으로 AI 학습에서 빠지는 데이터입니다.", color_name="orange-70")
-            render_excluded_expander(st.session_state.df_data, f_names, target_names_all, st.session_state.config_vars, include_range=False, key="diag", method=st.session_state.outlier_method, alpha=st.session_state.outlier_alpha)
+            render_excluded_expander(st.session_state.df_data, f_names, target_names_all, st.session_state.config_vars, include_range=False, key="diag", method=eff_method, alpha=st.session_state.outlier_alpha)
         with st.container(border=True):
             colored_header(label="📦 반복 측정 분포 (박스플롯)", description="같은 조건 반복 측정의 분포와 이상치를 봅니다. (학습 적용 데이터만 — 데이터베이스 관리에서 체크 해제한 행은 빠집니다)", color_name="green-70")
             _valid_box = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
-            analysis.render_boxplots(_valid_box, st.session_state.config_vars, st.session_state.target_vars, st.session_state.outlier_method, st.session_state.outlier_alpha, key_prefix="diagbox")
+            analysis.render_boxplots(_valid_box, st.session_state.config_vars, st.session_state.target_vars, eff_method, st.session_state.outlier_alpha, key_prefix="diagbox")
         with st.container(border=True):
             colored_header(label="📈 목표별 수렴 곡선", description="실험이 진행됨에 따라 각 목표가 어떻게 수렴하는지 봅니다. (학습 적용 데이터)", color_name="green-70")
             _valid_conv = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
@@ -1078,7 +1081,7 @@ elif st.session_state.app_mode == "Dashboard":
                         st.warning("정밀 분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
                     else:
                         with st.spinner("알고리즘 연산 중..."):
-                            X_train, y_train = process_robust_data(valid_df, f_names, t_name, st.session_state.outlier_method, st.session_state.outlier_alpha)
+                            X_train, y_train = process_robust_data(valid_df, f_names, t_name, eff_method, st.session_state.outlier_alpha)
                             ai_spaces = []
                             for var in st.session_state.config_vars:
                                 if "Real" in var["Type"]: ai_spaces.append(Real(var["Min"], var["Max"], name=var["Name"]))
@@ -1150,7 +1153,7 @@ elif st.session_state.app_mode == "Dashboard":
                         st.warning("정밀 분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
                     else:
                         with st.spinner("다중목표 알고리즘 연산 중..."):
-                            X_train, Y_train = process_robust_data_multi(valid_df, f_names, target_names_all, st.session_state.outlier_method, st.session_state.outlier_alpha)
+                            X_train, Y_train = process_robust_data_multi(valid_df, f_names, target_names_all, eff_method, st.session_state.outlier_alpha)
                             directions = [tv["Direction"] for tv in st.session_state.target_vars]
                             mobo_error = None
                             try:
