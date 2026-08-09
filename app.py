@@ -10,6 +10,7 @@ import streamlit.components.v1 as components
 from streamlit_extras.colored_header import colored_header
 from streamlit_extras.metric_cards import style_metric_cards
 from origin_charts import render_variable_charts, render_excluded_expander
+from data_manage import render_data_manager
 
 # 다중 목표(2개 이상) 최적화에만 쓰는 BoTorch는 무겁고(torch 포함) 목표 1개짜리 사용자에게는
 # 불필요하다. import를 감싸서, 미설치 상태에서도 단일 목표 경로(skopt)는 그대로 동작하고
@@ -983,13 +984,8 @@ elif st.session_state.app_mode == "Dashboard":
 
     with tab2:
         with st.container(border=True):
-            colored_header(label="전체 실험 데이터 아카이브", description="입력 이력을 한눈에 검토하고 이상치 데이터의 AI 반영 여부를 수정할 수 있습니다.", color_name="orange-70")
-            st.session_state.df_data = st.data_editor(
-                st.session_state.df_data, 
-                use_container_width=True, 
-                hide_index=True, 
-                column_config={"학습_적용": st.column_config.CheckboxColumn("학습 적용")}
-            )
+            colored_header(label="전체 실험 데이터 아카이브", description="검색·필터로 원하는 조건을 좁히고, 전체 선택/해제로 학습 적용을 일괄 관리하세요.", color_name="orange-70")
+            render_data_manager(st.session_state.config_vars, st.session_state.target_vars, st.session_state.passive_vars)
 
     with tab3:
         if not target_names_all:
