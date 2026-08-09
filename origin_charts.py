@@ -525,4 +525,3 @@ def render_variable_charts(df_valid, config_vars, target_vars, key_prefix="vardi
             st.download_button("📊 CSV 다운로드", data=_variable_csv(df_slice, var, targets),
                                file_name=f"{vname}_dist.csv", mime="text/csv",
                                use_container_width=True, key=f"{key_prefix}_csv_{vi}")
-        st.divider()

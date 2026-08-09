@@ -7,7 +7,20 @@ import base64
 from skopt import Optimizer
 from skopt.space import Real, Integer, Categorical
 import streamlit.components.v1 as components
-from streamlit_extras.colored_header import colored_header
+# colored_header(streamlit_extras)는 화면에 deprecated 경고 박스를 띄운다 — 같은 시그니처의
+# 네이티브 헬퍼로 대체해 경고를 없애고 헤더 세로 여백도 더 타이트하게 만든다.
+_HEADER_COLORS = {"orange-70": "#ed542b", "green-70": "#2f9e44", "blue-70": "#1c7ed6", "violet-70": "#7048e8"}
+
+
+def colored_header(label, description="", color_name="orange-70"):
+    rule = _HEADER_COLORS.get(color_name, "#ed542b")
+    import streamlit as _st
+    _st.markdown(
+        f"<div style='font-size:1.2rem;font-weight:800;line-height:1.25;margin:0;'>{label}</div>"
+        + (f"<div style='color:#7a716c;font-size:0.86rem;margin:2px 0 0;'>{description}</div>" if description else "")
+        + f"<hr style='margin:6px 0 12px;border:none;border-top:2px solid {rule};'>",
+        unsafe_allow_html=True,
+    )
 from streamlit_extras.metric_cards import style_metric_cards
 from origin_charts import render_variable_charts, render_excluded_expander
 from data_manage import render_data_manager
@@ -851,7 +864,8 @@ if st.session_state.app_mode == "Setup":
                     if safe_dir not in dir_options: safe_dir = "Maximize"
                     tv["Direction"] = ct2.selectbox("최적화 방향", dir_options, key=f"tdir_{i}", index=dir_options.index(safe_dir))
 
-            if st.button("➕ 목표 지표 블럭 추가", use_container_width=True):
+            _bt_add, _ = st.columns([1.4, 2])
+            if _bt_add.button("➕ 목표 지표 블럭 추가", use_container_width=True):
                 st.session_state.target_vars.append({"Old_Name": "", "Name": "", "Unit": "", "Direction": "Maximize"})
                 st.rerun()
 
@@ -882,9 +896,10 @@ if st.session_state.app_mode == "Setup":
                     var["Min"], var["Max"] = 0, 0
                     var["Options"] = c3.text_input("옵션 (쉼표 구분)", value=var.get("Options", ""), key=f"cat_{i}", placeholder="예: CB, Toluene")
         
-        if st.button("➕ 공정 변수 블럭 추가", use_container_width=True):
+        _bv_add, _ = st.columns([1.4, 4])
+        if _bv_add.button("➕ 공정 변수 블럭 추가", use_container_width=True):
             st.session_state.config_vars.append({
-                "Old_Name": "", "Name": "", "Unit": "", "Type": "Real (실수)", 
+                "Old_Name": "", "Name": "", "Unit": "", "Type": "Real (실수)",
                 "Min": 0.0, "Max": 10.0, "Options": ""
             })
             st.rerun()
