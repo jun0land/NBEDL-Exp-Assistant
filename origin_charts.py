@@ -486,8 +486,14 @@ def render_variable_charts(df_valid, config_vars, target_vars, key_prefix="vardi
                     _mask &= pd.to_numeric(_df[_vn], errors="coerce").between(_c[1], _c[2])
         return _df[_mask]
 
+    _picked = st.selectbox("그래프로 볼 공정 변수 (X축)", [v["Name"] for v in cvars],
+                           key=f"{key_prefix}_pickvar",
+                           help="한 번에 하나씩 봐야 조건 슬라이스(다른 변수 고정) 효과를 확인하기 좋습니다.")
+
     for vi, var in enumerate(cvars):
         vname = var["Name"]
+        if var["Name"] != _picked:
+            continue
         df_slice = _apply_slice(df_valid, vname)
         style = dict(x_title=x_titles[vname], y_title=y_title, title_font_size=title_fs,
                      tick_font_size=tick_fs, line_width=line_w, show_markers=show_markers, colors=colors,

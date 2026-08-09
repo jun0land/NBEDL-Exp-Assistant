@@ -236,6 +236,95 @@ def render_method_controls(method, alpha, df, feature_cols, *, key_prefix="outli
 
 
 # ---------------------------------------------------------------------------
+# 이상치 추천 & 사용자 검토 (자동 제거 대신)
+# ---------------------------------------------------------------------------
+def recommended_outlier_rows(df, feature_cols, target_cols, method, alpha):
+    """완전히 같은 조건(모든 공정 변수 일치) 그룹별로 각 목표에서 이상치로 '추천'되는 행을 찾는다.
+    학습_적용 상태와 무관하게 전체 데이터로 판정(추천이 안정적이도록). {row_index: [목표명,...]} 반환."""
+    reasons = {}
+    if df is None or df.empty:
+        return reasons
+    feats = [c for c in feature_cols if c in df.columns]
+    if not feats:
+        return reasons
+    for _, g in df.groupby(feats, dropna=False):
+        for t in target_cols:
+            if t not in g.columns:
+                continue
+            y = pd.to_numeric(g[t], errors="coerce")
+            m = outlier_mask(y.tolist(), method, alpha)
+            for idx, flag in zip(g.index, m):
+                if flag:
+                    reasons.setdefault(idx, []).append(t)
+    return reasons
+
+
+def render_outlier_review(feature_cols, target_cols, method, alpha, *, key_prefix="orev"):
+    """이상치를 자동 제거하지 않고 '추천'만 한 뒤, 사용자가 학습 제외 여부를 직접 정하게 한다.
+    st.session_state.df_data 의 '학습_적용' 을 직접 토글한다(기본은 모두 포함)."""
+    df = st.session_state.df_data
+    if df is None or df.empty:
+        st.info("데이터가 없습니다.")
+        return
+    reasons = recommended_outlier_rows(df, feature_cols, target_cols, method, alpha)
+    st.caption(
+        f"현재 방법({method_label(method)})이 '완전히 같은 조건' 그룹 안에서 이상치로 **추천**한 데이터입니다. "
+        "알고리즘만으로 이상치를 100% 확신할 수 없으니, 실제로 학습에서 뺄지는 직접 정하세요. "
+        "**'학습 적용' 체크를 해제하면 그 행이 AI 학습에서 제외**됩니다. 기본은 모두 포함입니다.")
+    if not reasons:
+        st.success("추천되는 이상치가 없습니다. (완전히 같은 조건을 3회 이상 반복한 그룹에서만 판정)")
+        return
+
+    idxs = [i for i in df.index if i in reasons]
+    excluded_now = int((df.loc[idxs, "학습_적용"] != True).sum()) if "학습_적용" in df.columns else 0  # noqa: E712
+    st.caption(f"추천 이상치 **{len(idxs)}건** · 현재 제외됨 {excluded_now}건")
+
+    b1, b2 = st.columns(2)
+    if b1.button("☐ 추천 전부 제외 (학습에서 빼기)", key=f"{key_prefix}_excl", use_container_width=True):
+        st.session_state.df_data.loc[idxs, "학습_적용"] = False
+        st.rerun()
+    if b2.button("☑ 추천 전부 포함 (되돌리기)", key=f"{key_prefix}_incl", use_container_width=True):
+        st.session_state.df_data.loc[idxs, "학습_적용"] = True
+        st.rerun()
+
+    view = df.loc[idxs].copy()
+    view["이상치 사유"] = [", ".join(reasons[i]) for i in idxs]
+    show = (["학습_적용"] if "학습_적용" in view.columns else []) + ["이상치 사유"]
+    if "샘플명" in view.columns:
+        show.append("샘플명")
+    show += [c for c in feature_cols if c in view.columns]
+    flagged = [t for t in target_cols if any(t in reasons[i] for i in idxs)]
+    show += [c for c in flagged if c in view.columns]
+    disabled = [c for c in show if c != "학습_적용"]
+    edited = st.data_editor(
+        view[show], hide_index=True, use_container_width=True, disabled=disabled,
+        column_config={"학습_적용": st.column_config.CheckboxColumn("학습 적용")},
+        key=f"{key_prefix}_editor")
+    if "학습_적용" in edited.columns:
+        st.session_state.df_data.loc[edited.index, "학습_적용"] = edited["학습_적용"].values
+
+
+def render_applied_exclusions(feature_cols, target_cols, *, key_prefix="applied"):
+    """실제로 학습에서 제외된(학습_적용==False) 데이터 목록을 아코디언(익스팬더)으로 보여준다.
+    데이터 진단에서 정한 제외가 AI 계산에 반영됐는지 확인하는 용도."""
+    df = st.session_state.df_data
+    if df is None or df.empty or "학습_적용" not in df.columns:
+        return
+    excl = df[df["학습_적용"] != True]  # noqa: E712
+    with st.expander(f"🚫 학습에서 제외하고 계산한 데이터 {len(excl)}건", expanded=False):
+        if excl.empty:
+            st.caption("제외된 데이터가 없습니다. 전체 유효 데이터로 계산합니다.")
+            return
+        st.caption("데이터베이스 관리에서 직접 끄거나, 데이터 진단의 '이상치 검토'에서 제외한 행입니다. "
+                   "이 목록이 실제 AI 계산에서 빠졌습니다.")
+        show = (["샘플명"] if "샘플명" in excl.columns else [])
+        show += [c for c in feature_cols if c in excl.columns]
+        show += [c for c in target_cols if c in excl.columns]
+        st.dataframe(excl[show] if show else excl, use_container_width=True,
+                     hide_index=True, key=f"{key_prefix}_df")
+
+
+# ---------------------------------------------------------------------------
 # 박스플롯 (반복 측정 분포 + 이상치)
 # ---------------------------------------------------------------------------
 def _cond_label(name, n):
@@ -267,8 +356,8 @@ def render_boxplots(df, config_vars, target_vars, method, alpha, *, key_prefix="
         return
 
     st.caption(f"'완전히 같은 조건(모든 공정 변수 일치)'끼리 묶은 박스입니다 · "
-               f"빨간 점 = 현재 방법({method_label(method)})이 그 조건 안에서 이상치로 판정한 값"
-               f"(= AI 학습에서 제외) · n = 그 조건의 반복 수(3 미만은 판정 불가).")
+               f"빨간 점 = 현재 방법({method_label(method)})이 이상치로 **추천**한 값"
+               f"(실제 제외는 '이상치 검토'에서 직접 결정) · n = 그 조건의 반복 수(3 미만은 판정 불가).")
 
     grouped = list(df.groupby(cvars, dropna=False))
 

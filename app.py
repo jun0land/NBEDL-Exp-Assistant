@@ -614,28 +614,28 @@ def coerce_bool_col(series):
 
     return series.map(_conv).astype(bool)
 
-def process_robust_data(df, feature_cols, target_col, method="iqr", alpha=0.05):
+def process_robust_data(df, feature_cols, target_col):
     grouped = df.groupby(feature_cols)
     robust_X, robust_y = [], []
     for name, group in grouped:
-        y_vals = group[target_col].tolist()
-        valid_y = analysis.robust_reduce(y_vals, method, alpha)
+        y_vals = pd.to_numeric(group[target_col], errors="coerce").dropna().tolist()
+        if not y_vals:
+            continue
         x_val = list(name) if isinstance(name, tuple) else [name]
         robust_X.append(x_val)
-        robust_y.append(np.mean(valid_y))
+        robust_y.append(np.mean(y_vals))
     return robust_X, robust_y
 
-def process_robust_data_multi(df, feature_cols, target_cols, method="iqr", alpha=0.05):
-    """process_robust_data와 같은 이상치 처리를 목표 지표 여러 개에 동시에 적용한다.
-    같은 X(공정 조건)로 한 번만 그룹핑해서 목표별 강건 평균을 나란히 계산 — 다중목표 경로 전용."""
+def process_robust_data_multi(df, feature_cols, target_cols):
+    """process_robust_data와 같은 조건별 단순 평균을 목표 지표 여러 개에 동시에 적용한다.
+    같은 X(공정 조건)로 한 번만 그룹핑해서 목표별 평균을 나란히 계산 — 다중목표 경로 전용."""
     grouped = df.groupby(feature_cols)
     robust_X, robust_Y = [], []
     for name, group in grouped:
         row_y = []
         for t_col in target_cols:
-            y_vals = group[t_col].tolist()
-            valid_y = analysis.robust_reduce(y_vals, method, alpha)
-            row_y.append(np.mean(valid_y))
+            yv = pd.to_numeric(group[t_col], errors="coerce").dropna().tolist()
+            row_y.append(np.mean(yv) if yv else float("nan"))
         x_val = list(name) if isinstance(name, tuple) else [name]
         robust_X.append(x_val)
         robust_Y.append(row_y)
@@ -1042,8 +1042,8 @@ elif st.session_state.app_mode == "Dashboard":
             st.session_state.outlier_alpha = a
             eff_method = analysis.resolve_method(m, st.session_state.df_data, f_names)
         with st.container(border=True):
-            colored_header(label="🚫 학습에서 제외된 데이터", description="현재 방법 기준으로 AI 학습에서 빠지는 데이터입니다.", color_name="orange-70")
-            render_excluded_expander(st.session_state.df_data, f_names, target_names_all, st.session_state.config_vars, include_range=False, key="diag", method=eff_method, alpha=st.session_state.outlier_alpha)
+            colored_header(label="🔎 이상치 검토 (추천 → 직접 결정)", description="알고리즘이 이상치로 추천한 데이터를 보고, 학습에서 뺄지 직접 정합니다. 자동 제거하지 않습니다.", color_name="orange-70")
+            analysis.render_outlier_review(f_names, target_names_all, eff_method, st.session_state.outlier_alpha, key_prefix="diag")
         with st.container(border=True):
             colored_header(label="📦 반복 측정 분포 (박스플롯)", description="같은 조건 반복 측정의 분포와 이상치를 봅니다. (학습 적용 데이터만 — 데이터베이스 관리에서 체크 해제한 행은 빠집니다)", color_name="green-70")
             _valid_box = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
@@ -1062,6 +1062,7 @@ elif st.session_state.app_mode == "Dashboard":
                 st.info("분석용 데이터가 입력되지 않았습니다.")
 
     with tab4:
+        analysis.render_applied_exclusions(f_names, target_names_all, key_prefix="ai")
         if not target_names_all:
             st.warning("등록된 목표 지표가 없습니다. 사이드바의 '환경 설정으로 돌아가기'에서 목표 지표를 추가하세요.")
 
@@ -1081,7 +1082,7 @@ elif st.session_state.app_mode == "Dashboard":
                         st.warning("정밀 분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
                     else:
                         with st.spinner("알고리즘 연산 중..."):
-                            X_train, y_train = process_robust_data(valid_df, f_names, t_name, eff_method, st.session_state.outlier_alpha)
+                            X_train, y_train = process_robust_data(valid_df, f_names, t_name)
                             ai_spaces = []
                             for var in st.session_state.config_vars:
                                 if "Real" in var["Type"]: ai_spaces.append(Real(var["Min"], var["Max"], name=var["Name"]))
@@ -1153,7 +1154,7 @@ elif st.session_state.app_mode == "Dashboard":
                         st.warning("정밀 분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
                     else:
                         with st.spinner("다중목표 알고리즘 연산 중..."):
-                            X_train, Y_train = process_robust_data_multi(valid_df, f_names, target_names_all, eff_method, st.session_state.outlier_alpha)
+                            X_train, Y_train = process_robust_data_multi(valid_df, f_names, target_names_all)
                             directions = [tv["Direction"] for tv in st.session_state.target_vars]
                             mobo_error = None
                             try:
