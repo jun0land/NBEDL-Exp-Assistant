@@ -128,8 +128,13 @@ def render_data_manager(config_vars, target_vars, passive_vars):
     _render_summary(df, config_vars, target_vars, cfg_names)
 
     # ---------- 검색 ----------
-    query = st.text_input("🔍 검색", key="dm_search", placeholder="샘플명·값 부분일치로 행 좁히기",
-                          label_visibility="collapsed")
+    query = st.text_input(
+        "🔍 표에서 검색",
+        key="dm_search",
+        placeholder="예: A-12 (샘플명) · 500 (값) · Toluene (옵션) — 입력한 글자가 든 행만 남습니다",
+        help="표의 어느 칸에든(샘플명·공정 조건값·결과값) 입력한 글자가 들어간 행만 걸러 보여줍니다. "
+             "일부만 입력해도 되고, 비워 두면 전체가 표시됩니다. 특정 값을 빠르게 찾을 때 쓰세요.",
+    )
 
     # ---------- 변수별 멀티셀렉트 필터 ----------
     filters = {}
