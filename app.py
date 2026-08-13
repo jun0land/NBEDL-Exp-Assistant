@@ -34,6 +34,7 @@ try:
     # 랜덤 가중치로 여러 번)로 자동 전환하기 위한 임포트.
     from botorch.acquisition.logei import qLogNoisyExpectedImprovement
     from botorch.acquisition.objective import GenericMCObjective
+    from botorch.acquisition.multi_objective.objective import GenericMCMultiOutputObjective
     from botorch.utils.multi_objective.scalarization import get_chebyshev_scalarization
     from botorch.sampling.normal import SobolQMCNormalSampler
     from botorch.optim import optimize_acqf
@@ -559,6 +560,56 @@ def coerce_bool_col(series):
 
     return series.map(_conv).astype(bool)
 
+# ------------------------------------------------------------------
+# 목표 지표의 최적화 방향
+#   Maximize / Minimize 외에 "Target"(특정 값에 맞추기)을 지원한다.
+#   예: 잔류 응력 0에 맞추기, 두께를 정확히 300nm로 맞추기.
+#   내부적으로 Target은 "목표값과의 거리를 최소화"로 환산해 처리한다.
+# ------------------------------------------------------------------
+DIRECTION_OPTIONS = ["Maximize", "Minimize", "Target"]
+DIRECTION_LABELS = {          # 저장값은 영문 유지(엑셀 호환), 화면 표시만 한글
+    "Maximize": "최대화",
+    "Minimize": "최소화",
+    "Target": "특정값 맞추기",
+}
+
+def target_direction(tv):
+    """저장된 Direction 값을 3종 중 하나로 정규화한다.
+    구버전 파일이나 오염된 값은 Maximize로 폴백."""
+    d = str(tv.get("Direction", "Maximize"))
+    for opt in DIRECTION_OPTIONS:
+        if opt in d:
+            return opt
+    return "Maximize"
+
+def target_value_of(tv):
+    """Target 모드에서 맞출 목표값. 미지정/파싱 실패 시 0.0."""
+    try:
+        v = float(tv.get("Target_Value", 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+    return 0.0 if pd.isna(v) else v
+
+def direction_label(tv):
+    """화면 표시용 방향 문자열. Target이면 맞출 값까지 같이 보여준다."""
+    d = target_direction(tv)
+    return f"Target={target_value_of(tv):g}" if d == "Target" else d
+
+def best_so_far(series, direction, target_val=0.0):
+    """수렴 곡선용 '현재까지의 최선값' 누적 시리즈.
+    Maximize/Minimize는 누적 최대/최소, Target은 목표값에 가장 가까운 값을 추적한다."""
+    s = pd.to_numeric(series, errors="coerce")
+    if direction == "Maximize":
+        return s.expanding().max()
+    if direction == "Minimize":
+        return s.expanding().min()
+    best, out = None, []
+    for v in s:
+        if pd.notna(v) and (best is None or abs(v - target_val) < abs(best - target_val)):
+            best = v
+        out.append(best)
+    return pd.Series(out, index=s.index)
+
 def process_robust_data(df, feature_cols, target_col):
     grouped = df.groupby(feature_cols)
     robust_X, robust_y = [], []
@@ -602,7 +653,7 @@ def process_robust_data_multi(df, feature_cols, target_cols):
 
 MOBO_HYPERVOLUME_MAX_OBJECTIVES = 4  # 이보다 목표가 많으면 스칼라화(ParEGO) 경로로 자동 전환
 
-def run_mobo(X_train, Y_train, config_vars, directions, n_candidates=3):
+def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, n_candidates=3):
     """다중목표 베이지안 최적화 (BoTorch).
 
     단일목표 EI는 "현재 최고값 대비 개선 기댓값"을 계산하는데, 이를 다차원으로 일반화한 것이
@@ -622,7 +673,13 @@ def run_mobo(X_train, Y_train, config_vars, directions, n_candidates=3):
     혼합공간 최적화(optimize_acqf_mixed)보다 단순하지만, 후보 3개를 뽑는 실험 추천 용도로는
     충분한 근사다.
 
-    directions: target_cols와 같은 순서의 "Maximize"/"Minimize" 리스트.
+    directions:    target_cols와 같은 순서의 "Maximize"/"Minimize"/"Target" 리스트.
+    target_values: 같은 순서의 목표값 리스트 (Target 방향에서만 의미가 있다).
+
+    GP는 목표의 '원본 값'을 그대로 학습하고, 방향 변환(최대화 기준으로 통일)은 획득함수의
+    objective 단계에서만 적용한다 — 이렇게 해야 Target 모드에서 |y-목표값| 의 꺾인 형태를
+    GP가 억지로 근사하지 않고, 후보의 예측값도 원본 단위로 그대로 보여줄 수 있다.
+
     반환: (candidates_raw, predicted_Y_raw) - 둘 다 원래 단위(부호 반전 없이).
     """
     torch.manual_seed(0)
@@ -659,30 +716,43 @@ def run_mobo(X_train, Y_train, config_vars, directions, n_candidates=3):
 
     X_raw = torch.tensor([encode_x(p) for p in X_train], dtype=torch.double)
     Y_raw = torch.tensor(Y_train, dtype=torch.double)
-    # Minimize 목표는 부호를 반전해 전부 "최대화" 기준으로 통일한다 (BoTorch 관례).
-    sign = torch.tensor([1.0 if "Maximize" in d else -1.0 for d in directions], dtype=torch.double)
-    Y_adj = Y_raw * sign
+    n_obj = Y_raw.shape[-1]
+
+    if target_values is None:
+        target_values = [0.0] * n_obj
+
+    # 방향 변환: 전부 "클수록 좋다" 기준으로 통일한다 (BoTorch 관례).
+    #   Maximize -> +y,  Minimize -> -y,  Target -> -|y - 목표값| (목표값에 가까울수록 0에 근접)
+    # GP 학습에는 쓰지 않고 획득함수 objective 로만 넘긴다.
+    is_target = torch.tensor([d == "Target" for d in directions])
+    signs = torch.tensor([1.0 if d == "Maximize" else -1.0 for d in directions], dtype=torch.double)
+    targets = torch.tensor([float(t) for t in target_values], dtype=torch.double)
+
+    def obj_transform(Y, X=None):
+        return torch.where(is_target, -(Y - targets).abs(), Y * signs)
 
     X_norm = normalize(X_raw, bounds=bounds_raw)
 
-    models = [SingleTaskGP(X_norm, Y_adj[:, i:i + 1], outcome_transform=Standardize(m=1))
-              for i in range(Y_adj.shape[-1])]
+    # GP는 원본 값을 학습한다 (Target 모드의 꺾인 |y-t| 형태를 GP가 근사하지 않도록).
+    models = [SingleTaskGP(X_norm, Y_raw[:, i:i + 1], outcome_transform=Standardize(m=1))
+              for i in range(n_obj)]
     model = ModelListGP(*models)
     mll = SumMarginalLogLikelihood(model.likelihood, model)
     fit_gpytorch_mll(mll)
 
-    n_obj = Y_adj.shape[-1]
+    Y_obj = obj_transform(Y_raw)  # 변환 공간에서의 관측값 (ref_point/스칼라화 기준용)
     standard_bounds = torch.zeros(2, X_norm.shape[-1], dtype=torch.double)
     standard_bounds[1] = 1.0
     sampler = SobolQMCNormalSampler(sample_shape=torch.Size([64]))
 
     if n_obj <= MOBO_HYPERVOLUME_MAX_OBJECTIVES:
         # 정확한 파레토 하이퍼볼륨 기반 (qLogNEHVI) — 목표가 적을 때만 감당 가능.
-        y_range = (Y_adj.max(dim=0).values - Y_adj.min(dim=0).values).clamp(min=1e-6)
-        ref_point = Y_adj.min(dim=0).values - 0.1 * y_range
+        y_range = (Y_obj.max(dim=0).values - Y_obj.min(dim=0).values).clamp(min=1e-6)
+        ref_point = Y_obj.min(dim=0).values - 0.1 * y_range
         acq = qLogNoisyExpectedHypervolumeImprovement(
             model=model, ref_point=ref_point.tolist(), X_baseline=X_norm,
             sampler=sampler, prune_baseline=True,
+            objective=GenericMCMultiOutputObjective(obj_transform),
         )
         candidates_norm, _ = optimize_acqf(
             acq_function=acq, bounds=standard_bounds, q=n_candidates,
@@ -697,7 +767,11 @@ def run_mobo(X_train, Y_train, config_vars, directions, n_candidates=3):
             gen = torch.Generator().manual_seed(i)
             weights = torch.rand(n_obj, generator=gen, dtype=torch.double)
             weights = weights / weights.sum()
-            scalarized_obj = GenericMCObjective(get_chebyshev_scalarization(weights=weights, Y=Y_adj))
+            # 모델은 원본 값을 내보내므로 방향 변환을 먼저 태운 뒤 체비셰프 스칼라화한다.
+            cheb = get_chebyshev_scalarization(weights=weights, Y=Y_obj)
+            scalarized_obj = GenericMCObjective(
+                lambda Z, X=None, _c=cheb: _c(obj_transform(Z), X)
+            )
             acq = qLogNoisyExpectedImprovement(
                 model=model, X_baseline=X_norm, objective=scalarized_obj,
                 sampler=sampler, prune_baseline=True,
@@ -712,9 +786,9 @@ def run_mobo(X_train, Y_train, config_vars, directions, n_candidates=3):
 
     candidates_raw_t = unnormalize(candidates_norm, bounds=bounds_raw)
 
+    # GP가 원본 값을 학습했으므로 사후평균이 곧 원본 단위 예측값이다 (부호 되돌림 불필요).
     with torch.no_grad():
-        posterior_mean_adj = model.posterior(candidates_norm).mean
-    posterior_mean_raw = posterior_mean_adj * sign
+        posterior_mean_raw = model.posterior(candidates_norm).mean
 
     candidates_raw = [decode_x(row.tolist()) for row in candidates_raw_t]
     predicted_Y = posterior_mean_raw.tolist()
@@ -744,6 +818,9 @@ def load_excel_data(uploaded_file):
     for tv in target_list:
         if "Old_Name" not in tv or pd.isna(tv["Old_Name"]):
             tv["Old_Name"] = tv.get("Name", "")
+        # 구버전 파일에는 Target_Value 컬럼이 없다 (Maximize/Minimize만 있던 시절).
+        tv["Direction"] = target_direction(tv)
+        tv["Target_Value"] = target_value_of(tv)
     st.session_state.target_vars = target_list
 
     if 'Exp_Name' in df_meta.columns and pd.notna(df_meta.iloc[0]['Exp_Name']):
@@ -797,16 +874,29 @@ if st.session_state.app_mode == "Setup":
 
             for i, tv in enumerate(st.session_state.target_vars):
                 with st.container(border=True):
-                    ct1, ct_u, ct2 = st.columns([2, 1, 1])
+                    ct1, ct_u, ct2 = st.columns([2, 1, 1.4])
                     tv["Name"] = ct1.text_input(f"목표 지표 {i+1} 이름", value=tv.get("Name", ""), key=f"tname_{i}", placeholder="예: J_sc")
                     tv["Unit"] = ct_u.text_input("단위", value=tv.get("Unit", ""), key=f"tunit_{i}", placeholder="예: mA/cm²")
-                    dir_options = ["Maximize", "Minimize"]
-                    safe_dir = tv.get("Direction", "Maximize")
-                    if safe_dir not in dir_options: safe_dir = "Maximize"
-                    tv["Direction"] = ct2.selectbox("최적화 방향", dir_options, key=f"tdir_{i}", index=dir_options.index(safe_dir))
+                    safe_dir = target_direction(tv)
+                    tv["Direction"] = ct2.selectbox(
+                        "최적화 방향", DIRECTION_OPTIONS, key=f"tdir_{i}",
+                        index=DIRECTION_OPTIONS.index(safe_dir),
+                        format_func=lambda d: DIRECTION_LABELS[d],
+                    )
+                    # Target 모드일 때만 맞출 값을 입력받는다 (예: 잔류 응력 0).
+                    if tv["Direction"] == "Target":
+                        tv["Target_Value"] = st.number_input(
+                            f"맞출 목표값 ({tv['Name'] or f'목표 지표 {i+1}'})",
+                            value=target_value_of(tv), step=0.000001, format="%.8f",
+                            key=f"ttarget_{i}",
+                            help="이 값에 가장 가까워지도록 AI가 공정 조건을 추천합니다.",
+                        )
+                    else:
+                        tv["Target_Value"] = target_value_of(tv)
 
             if st.button("➕ 목표 지표 블럭 추가", use_container_width=True):
-                st.session_state.target_vars.append({"Old_Name": "", "Name": "", "Unit": "", "Direction": "Maximize"})
+                st.session_state.target_vars.append(
+                    {"Old_Name": "", "Name": "", "Unit": "", "Direction": "Maximize", "Target_Value": 0.0})
                 st.rerun()
 
     with st.container(border=True):
@@ -998,9 +1088,12 @@ elif st.session_state.app_mode == "Dashboard":
         elif len(target_names_all) == 1:
             # ---- 목표 지표 1개: 기존 단일목표 경로 (skopt GP + EI) ----
             t_name = target_names_all[0]
-            t_dir = st.session_state.target_vars[0]["Direction"]
+            t_dir = target_direction(st.session_state.target_vars[0])
+            t_target = target_value_of(st.session_state.target_vars[0])
             t_unit = st.session_state.target_vars[0].get("Unit", "")
             t_label = f"{t_name}, {t_unit}" if t_unit else t_name
+            if t_dir == "Target":
+                t_label += f" → {t_target:g} 에 맞추기"
 
             valid_df = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
             c1, c2 = st.columns([1.2, 1])
@@ -1009,7 +1102,7 @@ elif st.session_state.app_mode == "Dashboard":
                 with st.container(border=True):
                     colored_header(label=f"📈 최적화 경향 곡선", description=f"실험이 진행됨에 따라 타겟 지표({t_label})의 수렴 상태를 보여줍니다.", color_name="green-70")
                     if len(valid_df) > 0:
-                        chart_data = valid_df[t_name].expanding().max() if "Maximize" in t_dir else valid_df[t_name].expanding().min()
+                        chart_data = best_so_far(valid_df[t_name], t_dir, t_target)
                         st.line_chart(chart_data, height=350)
                     else:
                         st.info("분석용 데이터가 입력되지 않았습니다.")
@@ -1030,7 +1123,14 @@ elif st.session_state.app_mode == "Dashboard":
                                     elif "Integer" in var["Type"]: ai_spaces.append(Integer(var["Min"], var["Max"], name=var["Name"]))
                                     elif "Categorical" in var["Type"]: ai_spaces.append(Categorical([o.strip() for o in var["Options"].split(",")], name=var["Name"]))
 
-                                y_train_fit = [-val for val in y_train] if "Maximize" in t_dir else y_train
+                                # skopt은 항상 최소화하므로 방향에 맞춰 목적값을 변환한다.
+                                #   Maximize -> -y,  Minimize -> y,  Target -> |y - 목표값|
+                                if t_dir == "Maximize":
+                                    y_train_fit = [-val for val in y_train]
+                                elif t_dir == "Target":
+                                    y_train_fit = [abs(val - t_target) for val in y_train]
+                                else:
+                                    y_train_fit = list(y_train)
 
                                 X_train_safe = []
                                 y_train_fit_safe = []
@@ -1081,7 +1181,7 @@ elif st.session_state.app_mode == "Dashboard":
             # (목표 1개면 EI로 정확히 축소됨) 위 skopt 경로와 별개 알고리즘이 아니라 자연스러운
             # 확장이다. 다만 여러 목표를 동시에 보므로 "하나의 목표를 골라 계산"하는 개념 자체가
             # 없어 위의 목표 선택 UI는 여기선 쓰지 않는다.
-            target_labels = ", ".join(f"{tv['Name']}({tv['Direction']})" for tv in st.session_state.target_vars)
+            target_labels = ", ".join(f"{tv['Name']}({direction_label(tv)})" for tv in st.session_state.target_vars)
             st.info(f"🎯 다중 목표 동시 최적화 (파레토 최적) — 등록된 {len(target_names_all)}개 지표를 함께 고려합니다: {target_labels}")
 
             valid_df = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
@@ -1092,11 +1192,12 @@ elif st.session_state.app_mode == "Dashboard":
                     colored_header(label="📈 목표별 수렴 곡선", description="각 목표 지표가 실험이 진행됨에 따라 어떻게 수렴하는지 보여줍니다.", color_name="green-70")
                     if len(valid_df) > 0:
                         for tv in st.session_state.target_vars:
-                            tn, td = tv["Name"], tv["Direction"]
+                            tn, td = tv["Name"], target_direction(tv)
+                            t_val = target_value_of(tv)
                             unit_str = f", {tv['Unit']}" if tv.get("Unit") else ""
                             if tn in valid_df.columns:
-                                cdata = valid_df[tn].expanding().max() if "Maximize" in td else valid_df[tn].expanding().min()
-                                st.caption(f"{tn} ({td}{unit_str})")
+                                cdata = best_so_far(valid_df[tn], td, t_val)
+                                st.caption(f"{tn} ({direction_label(tv)}{unit_str})")
                                 st.line_chart(cdata, height=160)
                     else:
                         st.info("분석용 데이터가 입력되지 않았습니다.")
@@ -1113,11 +1214,13 @@ elif st.session_state.app_mode == "Dashboard":
                         else:
                             with st.spinner("다중목표 알고리즘 연산 중..."):
                                 X_train, Y_train = process_robust_data_multi(valid_df, f_names, target_names_all)
-                                directions = [tv["Direction"] for tv in st.session_state.target_vars]
+                                directions = [target_direction(tv) for tv in st.session_state.target_vars]
+                                t_values = [target_value_of(tv) for tv in st.session_state.target_vars]
                                 mobo_error = None
                                 try:
                                     candidates, predicted_Y = run_mobo(
-                                        X_train, Y_train, st.session_state.config_vars, directions, n_candidates=3
+                                        X_train, Y_train, st.session_state.config_vars, directions,
+                                        target_values=t_values, n_candidates=3
                                     )
                                 except Exception as e:
                                     candidates, predicted_Y = None, None
