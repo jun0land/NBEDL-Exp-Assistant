@@ -23,6 +23,8 @@ import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 
+import analysis
+
 # ---- Myriad Pro 번들 폰트 ----
 # pd 앱은 폰트를 이름만 지정해 클라이언트 설치본에 의존했다. 여기서는 static/fonts 에
 # 폰트를 번들해 @font-face 로 로드한다 → 폰트 미설치 PC나 내보낸 이미지에서도 동일하게 나온다.
@@ -104,7 +106,7 @@ def _normalize(series) -> pd.Series:
 # =====================================================================
 # 제외된 데이터
 # =====================================================================
-def compute_excluded_rows(df_data, feature_cols, target_cols, config_vars, include_range):
+def compute_excluded_rows(df_data, feature_cols, target_cols, config_vars, include_range, method="iqr", alpha=0.05):
     """AI 학습에서 빠지는 행 + '제외 사유' 컬럼을 붙인 DataFrame 반환. 없으면 빈 DataFrame.
 
     사유 3종:
@@ -134,16 +136,10 @@ def compute_excluded_rows(df_data, feature_cols, target_cols, config_vars, inclu
                 if t_col not in group.columns:
                     continue
                 y = pd.to_numeric(group[t_col], errors="coerce")
-                yv = y.dropna()
-                if len(yv) >= 3:
-                    q1, q3 = np.percentile(yv, [25, 75])
-                    iqr = q3 - q1
-                    lo, hi = q1 - 1.5 * iqr, q3 + 1.5 * iqr
-                    out = group.index[(y < lo) | (y > hi)]
-                    # 전부 이상치면 process_robust_data 가 원본을 유지하므로 제외로 치지 않는다.
-                    if 0 < len(out) < len(yv):
-                        for idx in out:
-                            reasons[idx].append(f"이상치 ({t_col})")
+                m = analysis.outlier_mask(y.tolist(), method, alpha)
+                out_idx = [gi for gi, flag in zip(group.index, m) if flag]
+                for gi in out_idx:
+                    reasons[gi].append(f"이상치 ({t_col})")
 
     # 범위 밖 (단일 목표 경로에서만 실제 제외됨)
     if include_range:
@@ -173,9 +169,9 @@ def compute_excluded_rows(df_data, feature_cols, target_cols, config_vars, inclu
     return out_df
 
 
-def render_excluded_expander(df_data, feature_cols, target_cols, config_vars, include_range, key):
+def render_excluded_expander(df_data, feature_cols, target_cols, config_vars, include_range, key, method="iqr", alpha=0.05):
     """AI 계산 영역에 '제외된 데이터 N건' 익스팬더를 그린다."""
-    exc = compute_excluded_rows(df_data, feature_cols, target_cols, config_vars, include_range)
+    exc = compute_excluded_rows(df_data, feature_cols, target_cols, config_vars, include_range, method, alpha)
     n = len(exc)
     with st.expander(f"🚫 제외된 데이터 {n}건 (AI 학습에서 빠짐)", expanded=False):
         st.caption(
@@ -199,7 +195,7 @@ def render_excluded_expander(df_data, feature_cols, target_cols, config_vars, in
 # =====================================================================
 # Origin 스타일 figure
 # =====================================================================
-def build_variable_figure(df, var, target_vars, style):
+def build_variable_figure(df, var, target_vars, style, scale=1.0):
     """공정 변수 var(dict) 1개에 대한 Origin 스타일 figure.
 
     df          : 학습 적용된 유효 데이터
@@ -207,6 +203,9 @@ def build_variable_figure(df, var, target_vars, style):
     style       : {x_title, y_title, title_font_size, tick_font_size, line_width,
                    show_markers, colors: {target_name: hex}, normalize, show_trendline,
                    trendline_opacity, trend_degree}
+    scale       : figure 전체(크기·폰트·선·마커·여백)를 비율대로 축소/확대. 화면 표시용
+                  축소에 쓰고, 내보내기는 항상 scale=1.0(=960x768 원본)로 만든다. pd 앱의
+                  px_scale 과 같은 개념 — 모든 치수를 함께 곱해 비율을 유지한다.
     """
     var_name = var["Name"]
     is_cat = "Categorical" in var.get("Type", "")
@@ -215,6 +214,7 @@ def build_variable_figure(df, var, target_vars, style):
         pd.to_numeric(x_raw, errors="coerce").values, kind="stable")
     normalize = style.get("normalize", True)
     trend_degree = int(style.get("trend_degree", 1))
+    s = float(scale)
 
     fig = go.Figure()
     for i, tv in enumerate(target_vars):
@@ -239,7 +239,7 @@ def build_variable_figure(df, var, target_vars, style):
                 x=xs, y=y_plot,
                 mode="markers",
                 name=tname,
-                marker=dict(color=color, size=10, symbol=marker_symbol(i)),
+                marker=dict(color=color, size=10 * s, symbol=marker_symbol(i)),
                 customdata=y_orig,
                 hovertemplate=hover,
                 legendgroup=tname,
@@ -261,18 +261,18 @@ def build_variable_figure(df, var, target_vars, style):
                     x=x_line, y=y_line,
                     mode="lines",
                     name=f"{tname} 추세선",
-                    line=dict(color=color, width=float(style["line_width"])),
+                    line=dict(color=color, width=float(style["line_width"]) * s),
                     opacity=float(style.get("trendline_opacity", 0.4)),
                     legendgroup=tname,
                     showlegend=False,
                     hoverinfo="skip",
                 ))
 
-    tick_font = dict(family=FONT_FAMILY, size=style["tick_font_size"], color="black")
-    title_font = dict(family=FONT_FAMILY, size=style["title_font_size"], color="black")
+    tick_font = dict(family=FONT_FAMILY, size=style["tick_font_size"] * s, color="black")
+    title_font = dict(family=FONT_FAMILY, size=style["title_font_size"] * s, color="black")
     axis_common = dict(
-        showline=True, linecolor="black", linewidth=_AXIS_LINEWIDTH, mirror=True,
-        ticks="inside", tickwidth=_AXIS_LINEWIDTH, tickcolor="black", ticklen=_TICKLEN_MAJOR,
+        showline=True, linecolor="black", linewidth=_AXIS_LINEWIDTH * s, mirror=True,
+        ticks="inside", tickwidth=_AXIS_LINEWIDTH * s, tickcolor="black", ticklen=_TICKLEN_MAJOR * s,
         showgrid=False, zeroline=False, tickfont=tick_font,
     )
     x_kw = dict(axis_common)
@@ -299,9 +299,9 @@ def build_variable_figure(df, var, target_vars, style):
         font=dict(family=FONT_FAMILY, color="black"),
         xaxis=x_kw, yaxis=y_kw,
         showlegend=True,
-        legend=dict(font=dict(family=FONT_FAMILY, size=max(6, int(style["tick_font_size"] * 0.7)))),
-        margin=dict(l=90, r=30, t=30, b=85),
-        width=FIG_W, height=FIG_H,
+        legend=dict(font=dict(family=FONT_FAMILY, size=max(6, style["tick_font_size"] * 0.7 * s))),
+        margin=dict(l=90 * s, r=30 * s, t=30 * s, b=85 * s),
+        width=int(FIG_W * s), height=int(FIG_H * s),
     )
     return fig
 
@@ -426,6 +426,11 @@ def render_variable_charts(df_valid, config_vars, target_vars, key_prefix="vardi
         normalize = cT[3].checkbox("Y값 정규화 (0~1)", True, key=f"{key_prefix}_norm",
                                    help="끄면 목표별 원본 단위 그대로 표시합니다 (목표마다 스케일이 달라도 그대로 겹쳐 그림).")
 
+        disp_scale = st.slider(
+            "🔍 그래프 표시 배율 (%)", 30, 100, 60, 5, key=f"{key_prefix}_disp",
+            help="화면 표시 크기만 조절합니다. 내보내는 PNG/JPG는 배율과 무관하게 항상 출판용 원본(960×768)입니다.",
+        ) / 100.0
+
         st.caption("X축 제목 (그래프별)")
         x_titles = {}
         for vi, var in enumerate(cvars):
@@ -442,27 +447,81 @@ def render_variable_charts(df_valid, config_vars, target_vars, key_prefix="vardi
             colors[tv["Name"]] = ccols[i % len(ccols)].color_picker(
                 tv["Name"], origin_color(i), key=f"{key_prefix}_col_{i}")
 
+    # 공정 변수들은 서로 상관될 수 있어(다중공선성), 한 변수의 효과를 보려면 나머지 변수를 고정해야
+    # 교란이 줄어든다. 각 변수에 제약(숫자=범위, 범주=허용값)을 두고, 각 그래프는 자기 축 변수를
+    # 뺀 나머지 제약만 적용해 '다른 조건이 비슷한' 점끼리만 비교한다.
+    with st.expander("🎛️ 다른 변수 고정 (조건 슬라이스) — 상관된 변수 교란 줄이기", expanded=False):
+        st.caption("각 그래프는 X축 변수만 자유롭게 두고, 여기서 정한 나머지 변수 조건에 맞는 점만 그립니다. "
+                   "범위를 좁힐수록 다른 조건이 비슷한 점끼리만 비교합니다. 기본은 전체(제약 없음).")
+        _constraints = {}
+        _kcols = st.columns(2)
+        for _i, _var in enumerate(cvars):
+            _vn = _var["Name"]
+            _col = _kcols[_i % 2]
+            if "Categorical" in _var.get("Type", ""):
+                _opts = sorted(df_valid[_vn].dropna().astype(str).unique().tolist())
+                _sel = _col.multiselect(f"{_vn} (허용값)", _opts, default=_opts, key=f"{key_prefix}_cst_{_i}")
+                _constraints[_vn] = ("cat", set(_sel))
+            else:
+                _s = pd.to_numeric(df_valid[_vn], errors="coerce").dropna()
+                if _s.empty or _s.min() == _s.max():
+                    _col.caption(f"{_vn}: 값이 1종뿐이라 고정 불필요")
+                    _constraints[_vn] = ("num", None, None)
+                else:
+                    _lo, _hi = float(_s.min()), float(_s.max())
+                    _r = _col.slider(f"{_vn} 범위", _lo, _hi, (_lo, _hi), key=f"{key_prefix}_cst_{_i}")
+                    _constraints[_vn] = ("num", _r[0], _r[1])
+
+    def _apply_slice(_df, _axis_var):
+        # 축 변수(_axis_var)를 제외한 나머지 변수 제약을 적용한 부분집합을 반환한다.
+        _mask = pd.Series(True, index=_df.index)
+        for _vn, _c in _constraints.items():
+            if _vn == _axis_var or _vn not in _df.columns:
+                continue
+            if _c[0] == "cat":
+                if _c[1]:
+                    _mask &= _df[_vn].astype(str).isin(_c[1])
+            else:
+                if _c[1] is not None and _c[2] is not None:
+                    _mask &= pd.to_numeric(_df[_vn], errors="coerce").between(_c[1], _c[2])
+        return _df[_mask]
+
+    _picked = st.selectbox("그래프로 볼 공정 변수 (X축)", [v["Name"] for v in cvars],
+                           key=f"{key_prefix}_pickvar",
+                           help="한 번에 하나씩 봐야 조건 슬라이스(다른 변수 고정) 효과를 확인하기 좋습니다.")
+
     for vi, var in enumerate(cvars):
         vname = var["Name"]
+        if var["Name"] != _picked:
+            continue
+        df_slice = _apply_slice(df_valid, vname)
         style = dict(x_title=x_titles[vname], y_title=y_title, title_font_size=title_fs,
                      tick_font_size=tick_fs, line_width=line_w, show_markers=show_markers, colors=colors,
                      show_trendline=show_trendline, trendline_opacity=trendline_opacity,
                      trend_degree=trend_degree, normalize=normalize)
-        fig = build_variable_figure(df_valid, var, targets, style)
-        st.plotly_chart(fig, width="content", config={
+        _dropped = len(df_valid) - len(df_slice)
+        _note = f" · 다른 변수 고정으로 {_dropped}점 제외" if _dropped > 0 else " · (다른 변수 고정 없음)"
+        st.markdown(f"**{vname}** — 표시 {len(df_slice)}점{_note}")
+        if df_slice.empty:
+            st.warning("고정 조건에 맞는 데이터가 없습니다. 위 '🎛️ 다른 변수 고정'에서 범위를 넓혀 보세요.")
+            st.divider()
+            continue
+        # 화면은 축소 배율로, 내보내기는 항상 원본(scale=1.0)으로 — 축소해도 비율이 같아 안 깨진다.
+        fig_disp = build_variable_figure(df_slice, var, targets, style, scale=disp_scale)
+        fig_full = build_variable_figure(df_slice, var, targets, style, scale=1.0)
+        st.plotly_chart(fig_disp, width="content", config={
             "displaylogo": False, "responsive": False,
-            "toImageButtonOptions": {"format": "png", "width": FIG_W, "height": FIG_H,
-                                     "scale": 3, "filename": vname},
+            "toImageButtonOptions": {"format": "png", "width": int(FIG_W * disp_scale),
+                                     "height": int(FIG_H * disp_scale), "scale": 3, "filename": vname},
         })
         e1, e2, e3 = st.columns(3)
         with e1:
-            _export_image_button(fig, fmt="png", transparent=True, filename=f"{vname}_dist",
+            _export_image_button(fig_full, fmt="png", transparent=True, filename=f"{vname}_dist",
                                  label="🖼️ PNG (투명)", btn_id=f"{key_prefix}_png_{vi}")
         with e2:
-            _export_image_button(fig, fmt="jpeg", transparent=False, filename=f"{vname}_dist",
+            _export_image_button(fig_full, fmt="jpeg", transparent=False, filename=f"{vname}_dist",
                                  label="📷 JPG (흰 배경)", btn_id=f"{key_prefix}_jpg_{vi}")
         with e3:
-            st.download_button("📊 CSV 다운로드", data=_variable_csv(df_valid, var, targets),
+            st.download_button("📊 CSV 다운로드", data=_variable_csv(df_slice, var, targets),
                                file_name=f"{vname}_dist.csv", mime="text/csv",
                                use_container_width=True, key=f"{key_prefix}_csv_{vi}")
-        st.divider()
