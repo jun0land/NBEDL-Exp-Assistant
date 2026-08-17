@@ -23,8 +23,6 @@ import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 
-import analysis
-
 # ---- Myriad Pro 번들 폰트 ----
 # pd 앱은 폰트를 이름만 지정해 클라이언트 설치본에 의존했다. 여기서는 static/fonts 에
 # 폰트를 번들해 @font-face 로 로드한다 → 폰트 미설치 PC나 내보낸 이미지에서도 동일하게 나온다.
@@ -101,95 +99,6 @@ def _normalize(series) -> pd.Series:
     if not np.isfinite(lo) or not np.isfinite(hi) or hi == lo:
         return pd.Series([0.5] * len(s), index=s.index)
     return (s - lo) / (hi - lo)
-
-
-# =====================================================================
-# 제외된 데이터
-# =====================================================================
-def compute_excluded_rows(df_data, feature_cols, target_cols, config_vars, include_range, method="iqr", alpha=0.05):
-    """AI 학습에서 빠지는 행 + '제외 사유' 컬럼을 붙인 DataFrame 반환. 없으면 빈 DataFrame.
-
-    사유 3종:
-      - '학습 제외 (수동)'   : 학습_적용 체크 해제
-      - '이상치 (목표명)'    : 같은 공정 조건 반복측정(3개 이상) 중 IQR(1.5) 밖 값 (목표별)
-      - '범위 밖 (변수명)'   : 공정 변수 설정 Min~Max 밖 / 옵션에 없는 값 (단일 목표 경로에서만)
-    """
-    if df_data is None or df_data.empty:
-        return pd.DataFrame()
-
-    reasons = {idx: [] for idx in df_data.index}
-
-    if "학습_적용" in df_data.columns:
-        manual_mask = df_data["학습_적용"] != True  # noqa: E712
-    else:
-        manual_mask = pd.Series(False, index=df_data.index)
-    for idx in df_data.index[manual_mask]:
-        reasons[idx].append("학습 제외 (수동)")
-
-    valid = df_data[~manual_mask]
-
-    # IQR 이상치 (목표별)
-    feats = [c for c in feature_cols if c in valid.columns]
-    if feats and len(valid):
-        for _, group in valid.groupby(feats, dropna=False):
-            for t_col in target_cols:
-                if t_col not in group.columns:
-                    continue
-                y = pd.to_numeric(group[t_col], errors="coerce")
-                m = analysis.outlier_mask(y.tolist(), method, alpha)
-                out_idx = [gi for gi, flag in zip(group.index, m) if flag]
-                for gi in out_idx:
-                    reasons[gi].append(f"이상치 ({t_col})")
-
-    # 범위 밖 (단일 목표 경로에서만 실제 제외됨)
-    if include_range:
-        for idx in valid.index:
-            for var in config_vars:
-                name = var.get("Name")
-                if not name or name not in df_data.columns:
-                    continue
-                val = df_data.at[idx, name]
-                if "Categorical" in var.get("Type", ""):
-                    opts = [o.strip() for o in str(var.get("Options", "")).split(",") if o.strip()]
-                    if opts and str(val) not in opts:
-                        reasons[idx].append(f"범위 밖 ({name})")
-                else:
-                    try:
-                        v, lo, hi = float(val), float(var.get("Min")), float(var.get("Max"))
-                        if not (lo <= v <= hi):
-                            reasons[idx].append(f"범위 밖 ({name})")
-                    except (TypeError, ValueError):
-                        pass
-
-    excluded = [idx for idx in df_data.index if reasons[idx]]
-    if not excluded:
-        return pd.DataFrame()
-    out_df = df_data.loc[excluded].copy()
-    out_df.insert(0, "제외 사유", [", ".join(reasons[idx]) for idx in excluded])
-    return out_df
-
-
-def render_excluded_expander(df_data, feature_cols, target_cols, config_vars, include_range, key, method="iqr", alpha=0.05):
-    """AI 계산 영역에 '제외된 데이터 N건' 익스팬더를 그린다."""
-    exc = compute_excluded_rows(df_data, feature_cols, target_cols, config_vars, include_range, method, alpha)
-    n = len(exc)
-    with st.expander(f"🚫 제외된 데이터 {n}건 (AI 학습에서 빠짐)", expanded=False):
-        st.caption(
-            "제외 사유는 3가지입니다 — "
-            "**학습 제외(수동)**: 데이터베이스 관리 탭에서 '학습 적용'을 끈 행 · "
-            "**이상치**: 완전히 같은 공정 조건을 3번 이상 반복 측정한 그룹 안에서 IQR(1.5배) 밖으로 튀는 값 "
-            "(반복 2개 이하는 판정 안 함, 5개 이상부터 잘 잡힘) · "
-            "**범위 밖**: 공정 변수 설정 범위(최소~최대)를 벗어난 값(단일 목표 계산에만 적용)."
-        )
-        if n == 0:
-            st.caption("현재 제외된 데이터가 없습니다. 모든 유효 데이터가 AI 학습에 사용됩니다.")
-            return
-        show_cols = ["제외 사유"]
-        if "샘플명" in exc.columns:
-            show_cols.append("샘플명")
-        show_cols += [c for c in feature_cols if c in exc.columns]
-        show_cols += [c for c in target_cols if c in exc.columns]
-        st.dataframe(exc[show_cols], use_container_width=True, hide_index=True, key=f"exc_df_{key}")
 
 
 # =====================================================================

@@ -21,8 +21,10 @@ def colored_header(label, description="", color_name="orange-70"):
         + f"<hr style='margin:6px 0 12px;border:none;border-top:2px solid {rule};'>",
         unsafe_allow_html=True,
     )
+
+
 from streamlit_extras.metric_cards import style_metric_cards
-from origin_charts import render_variable_charts, render_excluded_expander
+from origin_charts import render_variable_charts
 from data_manage import render_data_manager
 import analysis
 # 목표 방향(최대화/최소화/특정값 맞추기) 공용 헬퍼 — analysis.py 가 단일 출처다.
@@ -662,7 +664,7 @@ def process_robust_data_multi(df, feature_cols, target_cols):
 
 MOBO_HYPERVOLUME_MAX_OBJECTIVES = 4  # 이보다 목표가 많으면 스칼라화(ParEGO) 경로로 자동 전환
 
-def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, n_candidates=3):
+def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, weights=None, n_candidates=3):
     """다중목표 베이지안 최적화 (BoTorch).
 
     단일목표 EI는 "현재 최고값 대비 개선 기댓값"을 계산하는데, 이를 다차원으로 일반화한 것이
@@ -730,6 +732,15 @@ def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, n_ca
     if target_values is None:
         target_values = [0.0] * n_obj
 
+    # 목표 가중치: 없으면 모두 1. 합이 0이면 균등. 평균 1이 되게 정규화(스케일 유지).
+    if weights is None:
+        w = torch.ones(n_obj, dtype=torch.double)
+    else:
+        w = torch.tensor([float(x) for x in weights], dtype=torch.double).clamp(min=0.0)
+        if float(w.sum()) <= 0:
+            w = torch.ones(n_obj, dtype=torch.double)
+    w = w / w.sum() * n_obj
+
     # 방향 변환: 전부 "클수록 좋다" 기준으로 통일한다 (BoTorch 관례).
     #   Maximize -> +y,  Minimize -> -y,  Target -> -|y - 목표값| (목표값에 가까울수록 0에 근접)
     # GP 학습에는 쓰지 않고 획득함수 objective 로만 넘긴다.
@@ -756,12 +767,13 @@ def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, n_ca
 
     if n_obj <= MOBO_HYPERVOLUME_MAX_OBJECTIVES:
         # 정확한 파레토 하이퍼볼륨 기반 (qLogNEHVI) — 목표가 적을 때만 감당 가능.
-        y_range = (Y_obj.max(dim=0).values - Y_obj.min(dim=0).values).clamp(min=1e-6)
-        ref_point = Y_obj.min(dim=0).values - 0.1 * y_range
+        Y_objw = Y_obj * w
+        y_range = (Y_objw.max(dim=0).values - Y_objw.min(dim=0).values).clamp(min=1e-6)
+        ref_point = Y_objw.min(dim=0).values - 0.1 * y_range
         acq = qLogNoisyExpectedHypervolumeImprovement(
             model=model, ref_point=ref_point.tolist(), X_baseline=X_norm,
             sampler=sampler, prune_baseline=True,
-            objective=GenericMCMultiOutputObjective(obj_transform),
+            objective=GenericMCMultiOutputObjective(lambda Y, X=None: obj_transform(Y, X) * w),
         )
         candidates_norm, _ = optimize_acqf(
             acq_function=acq, bounds=standard_bounds, q=n_candidates,
@@ -774,7 +786,7 @@ def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, n_ca
         cand_rows = []
         for i in range(n_candidates):
             gen = torch.Generator().manual_seed(i)
-            weights = torch.rand(n_obj, generator=gen, dtype=torch.double)
+            weights = torch.rand(n_obj, generator=gen, dtype=torch.double) * w
             weights = weights / weights.sum()
             # 모델은 원본 값을 내보내므로 방향 변환을 먼저 태운 뒤 체비셰프 스칼라화한다.
             cheb = get_chebyshev_scalarization(weights=weights, Y=Y_obj)
@@ -860,6 +872,11 @@ def load_excel_data(uploaded_file):
 # [화면 A] 실험 세팅 모드 (Setup)
 # ==========================================
 if st.session_state.app_mode == "Setup":
+    # 블록 삭제 시 위젯 키의 '세대(_gen)'를 올려 남은 블록 위젯을 강제로 새로 만든다(모델값으로
+    # 재초기화). Streamlit은 인덱스 키를 세션 상태에서 지워도 위젯 값을 완전히 리셋하지 않는
+    # 경우가 있어, 키 문자열 자체를 바꾸는 이 방식이 확실하다.
+    _gen = st.session_state.setdefault("_setup_gen", 0)
+
     col_title, col_upload = st.columns([2.6, 1.2], gap="medium", vertical_alignment="center")
 
     with col_title:
@@ -888,12 +905,12 @@ if st.session_state.app_mode == "Setup":
 
             for i, tv in enumerate(st.session_state.target_vars):
                 with st.container(border=True):
-                    ct1, ct_u, ct2 = st.columns([2, 1, 1.4])
-                    tv["Name"] = ct1.text_input(f"목표 지표 {i+1} 이름", value=tv.get("Name", ""), key=f"tname_{i}", placeholder="예: J_sc")
-                    tv["Unit"] = ct_u.text_input("단위", value=tv.get("Unit", ""), key=f"tunit_{i}", placeholder="예: mA/cm²")
+                    ct1, ct_u, ct2, ct_del = st.columns([2, 1, 1.4, 0.6], vertical_alignment="bottom")
+                    tv["Name"] = ct1.text_input(f"목표 지표 {i+1} 이름", value=tv.get("Name", ""), key=f"tname_{_gen}_{i}", placeholder="예: J_sc")
+                    tv["Unit"] = ct_u.text_input("단위", value=tv.get("Unit", ""), key=f"tunit_{_gen}_{i}", placeholder="예: mA/cm²")
                     safe_dir = target_direction(tv)
                     tv["Direction"] = ct2.selectbox(
-                        "최적화 방향", DIRECTION_OPTIONS, key=f"tdir_{i}",
+                        "최적화 방향", DIRECTION_OPTIONS, key=f"tdir_{_gen}_{i}",
                         index=DIRECTION_OPTIONS.index(safe_dir),
                         format_func=lambda d: DIRECTION_LABELS[d],
                     )
@@ -902,14 +919,19 @@ if st.session_state.app_mode == "Setup":
                         tv["Target_Value"] = st.number_input(
                             f"맞출 목표값 ({tv['Name'] or f'목표 지표 {i+1}'})",
                             value=target_value_of(tv), step=0.000001, format="%.8f",
-                            key=f"ttarget_{i}",
+                            key=f"ttarget_{_gen}_{i}",
                             help="이 값에 가장 가까워지도록 AI가 공정 조건을 추천합니다.",
                         )
                     else:
                         tv["Target_Value"] = target_value_of(tv)
 
-            _bt_add, _ = st.columns([1.4, 2])
-            if _bt_add.button("➕ 목표 지표 블럭 추가", use_container_width=True):
+                    if ct_del.button("🗑", key=f"del_tv_{i}", help="이 목표 지표 삭제", use_container_width=True):
+                        st.session_state.target_vars.pop(i)
+                        st.session_state["_setup_gen"] = _gen + 1
+                        st.rerun()
+
+            _bt_add, _ = st.columns([0.6, 6])
+            if _bt_add.button("➕", key="add_tv", use_container_width=True, help="목표 지표 추가"):
                 st.session_state.target_vars.append(
                     {"Old_Name": "", "Name": "", "Unit": "", "Direction": "Maximize", "Target_Value": 0.0})
                 st.rerun()
@@ -919,30 +941,35 @@ if st.session_state.app_mode == "Setup":
         
         for i, var in enumerate(st.session_state.config_vars):
             with st.container(border=True): 
-                c1, c_u, c2, c3, c4 = st.columns([2, 1, 2, 2, 2])
-                var["Name"] = c1.text_input(f"변수 {i+1} 이름", value=var.get("Name", ""), key=f"name_{i}", placeholder="예: 스핀코팅 속도1")
-                var["Unit"] = c_u.text_input("단위", value=var.get("Unit", ""), key=f"unit_{i}", placeholder="예: rpm")
-                
+                c1, c_u, c2, c3, c4, c_del = st.columns([2, 1, 2, 2, 2, 0.7], vertical_alignment="bottom")
+                var["Name"] = c1.text_input(f"변수 {i+1} 이름", value=var.get("Name", ""), key=f"name_{_gen}_{i}", placeholder="예: 스핀코팅 속도1")
+                var["Unit"] = c_u.text_input("단위", value=var.get("Unit", ""), key=f"unit_{_gen}_{i}", placeholder="예: rpm")
+
                 type_options = ["Real (실수)", "Integer (정수)", "Categorical (범주)"]
                 safe_type = var.get("Type", "Real (실수)")
                 if safe_type not in type_options: safe_type = "Real (실수)"
-                    
-                var["Type"] = c2.selectbox("타입", type_options, key=f"type_{i}", index=type_options.index(safe_type))
-                
+
+                var["Type"] = c2.selectbox("타입", type_options, key=f"type_{_gen}_{i}", index=type_options.index(safe_type))
+
                 if "Real" in var["Type"]:
-                    var["Min"] = c3.number_input("최소값", value=float(var.get("Min", 0.0)), key=f"rmin_{i}")
-                    var["Max"] = c4.number_input("최대값", value=float(var.get("Max", 10.0)), key=f"rmax_{i}")
+                    var["Min"] = c3.number_input("최소값", value=float(var.get("Min", 0.0)), key=f"rmin_{_gen}_{i}")
+                    var["Max"] = c4.number_input("최대값", value=float(var.get("Max", 10.0)), key=f"rmax_{_gen}_{i}")
                     var["Options"] = ""
                 elif "Integer" in var["Type"]:
-                    var["Min"] = c3.number_input("최소값", value=int(var.get("Min", 0)), step=1, key=f"imin_{i}")
-                    var["Max"] = c4.number_input("최대값", value=int(var.get("Max", 100)), step=1, key=f"imax_{i}")
+                    var["Min"] = c3.number_input("최소값", value=int(var.get("Min", 0)), step=1, key=f"imin_{_gen}_{i}")
+                    var["Max"] = c4.number_input("최대값", value=int(var.get("Max", 100)), step=1, key=f"imax_{_gen}_{i}")
                     var["Options"] = ""
                 elif "Categorical" in var["Type"]:
                     var["Min"], var["Max"] = 0, 0
-                    var["Options"] = c3.text_input("옵션 (쉼표 구분)", value=var.get("Options", ""), key=f"cat_{i}", placeholder="예: CB, Toluene")
-        
-        _bv_add, _ = st.columns([1.4, 4])
-        if _bv_add.button("➕ 공정 변수 블럭 추가", use_container_width=True):
+                    var["Options"] = c3.text_input("옵션 (쉼표 구분)", value=var.get("Options", ""), key=f"cat_{_gen}_{i}", placeholder="예: CB, Toluene")
+
+                if c_del.button("🗑", key=f"del_cv_{i}", help="이 변수 삭제", use_container_width=True):
+                    st.session_state.config_vars.pop(i)
+                    st.session_state["_setup_gen"] = _gen + 1
+                    st.rerun()
+
+        _bv_add, _ = st.columns([0.5, 8])
+        if _bv_add.button("➕", key="add_cv", use_container_width=True, help="공정 변수 추가"):
             st.session_state.config_vars.append({
                 "Old_Name": "", "Name": "", "Unit": "", "Type": "Real (실수)",
                 "Min": 0.0, "Max": 10.0, "Options": ""
@@ -1029,7 +1056,7 @@ elif st.session_state.app_mode == "Dashboard":
             st.session_state.clear()
             st.rerun()
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📝 신규 실험 입력", "🗂️ 데이터베이스 관리", "🔬 데이터 진단", "🤖 AI 최적화 대시보드"])
+    tab1, tab3, tab4 = st.tabs(["📝 신규 실험 입력", "🔬 데이터 진단", "🤖 AI 최적화 대시보드"])
 
     with tab1:
         with st.container(border=True):
@@ -1089,11 +1116,6 @@ elif st.session_state.app_mode == "Dashboard":
                 else:
                     st.warning("삭제할 데이터가 없습니다.")
 
-    with tab2:
-        with st.container(border=True):
-            colored_header(label="전체 실험 데이터 아카이브", description="검색·필터로 원하는 조건을 좁히고, 전체 선택/해제로 학습 적용을 일괄 관리하세요.", color_name="orange-70")
-            render_data_manager(st.session_state.config_vars, st.session_state.target_vars, st.session_state.passive_vars)
-
     with tab3:
         with st.container(border=True):
             colored_header(label="🔬 이상치 판정 설정", description="이상치 판정 방법과 유의수준을 정합니다. 강건 평균·제외 목록·박스플롯에 함께 적용됩니다.", color_name="orange-70")
@@ -1104,6 +1126,9 @@ elif st.session_state.app_mode == "Dashboard":
         with st.container(border=True):
             colored_header(label="🔎 이상치 검토 (추천 → 직접 결정)", description="알고리즘이 이상치로 추천한 데이터를 보고, 학습에서 뺄지 직접 정합니다. 자동 제거하지 않습니다.", color_name="orange-70")
             analysis.render_outlier_review(f_names, target_names_all, eff_method, st.session_state.outlier_alpha, key_prefix="diag")
+        with st.container(border=True):
+            colored_header(label="🗂️ 전체 실험 데이터 아카이브", description="전체 원본 데이터입니다. 이상치 제거는 데이터를 지우지 않고 '학습 적용' 체크만 바꿉니다. 검색·필터·전체선택/해제로 학습 적용을 일괄 관리하세요.", color_name="orange-70")
+            render_data_manager(st.session_state.config_vars, st.session_state.target_vars, st.session_state.passive_vars)
         with st.container(border=True):
             colored_header(label="📦 반복 측정 분포 (박스플롯)", description="같은 조건 반복 측정의 분포와 이상치를 봅니다. (학습 적용 데이터만 — 데이터베이스 관리에서 체크 해제한 행은 빠집니다)", color_name="green-70")
             _valid_box = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
@@ -1220,21 +1245,36 @@ elif st.session_state.app_mode == "Dashboard":
 
             with st.container(border=True):
                 colored_header(label="🤖 파레토 최적 후보 (MOBO)", description="qNEHVI 알고리즘으로 여러 목표를 동시에 개선할 다음 실험 후보를 제안합니다.", color_name="orange-70")
+                _mobo_sel = st.multiselect(
+                    "계산에 포함할 목표 지표", target_names_all, default=target_names_all,
+                    key="mobo_targets", help="일부 목표만 골라 파레토 최적을 계산할 수 있습니다. (2개 이상 선택)")
+                _mobo_w = {n: 1.0 for n in _mobo_sel}
+                if len(_mobo_sel) >= 2 and st.checkbox(
+                        "⚙️ 목표별 가중치 (고급)", key="mobo_w_adv",
+                        help="가중치가 큰 목표를 더 중시해 후보를 찾습니다. 기본은 모두 동일."):
+                    _wc = st.columns(min(len(_mobo_sel), 4))
+                    for _wi, _tn in enumerate(_mobo_sel):
+                        _mobo_w[_tn] = _wc[_wi % len(_wc)].number_input(
+                            f"{_tn} 가중치", min_value=0.0, value=1.0, step=0.1, key=f"mobo_w_{_tn}")
                 if not _BOTORCH_AVAILABLE:
                     st.error("다중 목표 최적화에는 `botorch` 패키지가 필요합니다. `pip install botorch`로 설치한 뒤 앱을 다시 시작하세요.")
                 elif st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
-                    if len(valid_df) < 2:
+                    if len(_mobo_sel) < 2:
+                        st.warning("파레토 최적화에는 목표 지표를 2개 이상 선택해야 합니다.")
+                    elif len(valid_df) < 2:
                         st.warning("정밀 분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
                     else:
+                        _sel_tvs = [tv for tv in st.session_state.target_vars if tv["Name"] in _mobo_sel]
                         with st.spinner("다중목표 알고리즘 연산 중..."):
-                            X_train, Y_train = process_robust_data_multi(valid_df, f_names, target_names_all)
-                            directions = [target_direction(tv) for tv in st.session_state.target_vars]
-                            t_values = [target_value_of(tv) for tv in st.session_state.target_vars]
+                            X_train, Y_train = process_robust_data_multi(valid_df, f_names, _mobo_sel)
+                            directions = [target_direction(tv) for tv in _sel_tvs]
+                            t_values = [target_value_of(tv) for tv in _sel_tvs]
+                            _weights = [_mobo_w[tv["Name"]] for tv in _sel_tvs]
                             mobo_error = None
                             try:
                                 candidates, predicted_Y = run_mobo(
                                     X_train, Y_train, st.session_state.config_vars, directions,
-                                    target_values=t_values, n_candidates=3
+                                    target_values=t_values, weights=_weights, n_candidates=3
                                 )
                             except Exception as e:
                                 candidates, predicted_Y = None, None
@@ -1259,7 +1299,7 @@ elif st.session_state.app_mode == "Dashboard":
                                     style_metric_cards(background_color="transparent", border_left_color="#ed542b", border_color="transparent", box_shadow=False)
                                     pred_str = " · ".join(
                                         f"{tv['Name']} ≈ {p:.6f}{' ' + tv['Unit'] if tv.get('Unit') else ''}"
-                                        for tv, p in zip(st.session_state.target_vars, pred)
+                                        for tv, p in zip(_sel_tvs, pred)
                                     )
                                     st.caption(f"예측 목표값: {pred_str}")
         # ---- 공정 변수별 목표 지표 분포 (Origin 스타일) ----

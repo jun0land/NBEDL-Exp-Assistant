@@ -258,14 +258,6 @@ def outlier_mask(values, method="iqr", alpha=0.05):
     return mask
 
 
-def robust_reduce(values, method="iqr", alpha=0.05):
-    """이상치를 뺀 값 리스트를 반환. 남는 게 없으면 원본 유지. 강건 평균 계산용."""
-    vals = list(values)
-    mask = outlier_mask(vals, method, alpha)
-    kept = [v for v, m in zip(vals, mask) if not m]
-    return kept if kept else vals
-
-
 # ---------------------------------------------------------------------------
 # 방법/유의수준 선택 UI
 # ---------------------------------------------------------------------------
