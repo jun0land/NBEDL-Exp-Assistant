@@ -61,20 +61,25 @@ def _render_summary(df, config_vars, target_vars, cfg_names):
             # 방향별 desirability (최대화=클수록, 최소화=작을수록, 특정값=목표값에 가까울수록 1)
             score_df[tv["Name"]] = desirability(col, tv)
 
-        # 목표 가중치 — 기본은 모두 1(동일). 고급 옵션을 켜면 특정 목표를 더 중시할 수 있다.
-        weights = {tv["Name"]: 1.0 for tv in tgts}
-        if len(tgts) >= 2:
-            adv = st.checkbox("⚙️ 목표별 가중치 조정 (고급)", key="dm_weight_adv",
-                              help="기본은 모든 목표 동일 가중입니다. 특정 목표를 더 중시하려면 켜고 값을 올리세요.")
-            if adv:
-                wcols = st.columns(min(len(tgts), 4))
-                for i, tv in enumerate(tgts):
-                    weights[tv["Name"]] = wcols[i % len(wcols)].number_input(
-                        f"{tv['Name']} 가중치", min_value=0.0, value=1.0, step=0.1,
-                        key=f"dm_w_{tv['Name']}")
+        # 목표별 '포함 여부 + 가중치'를 한 줄에: [체크박스=이름/방향] [가중치칸]. 체크 해제한 목표는
+        # 종합 최적 조건 계산에서 빠지고, 그 목표의 가중치칸은 비활성화된다.
+        st.caption("종합 최적 조건에 포함할 목표와 가중치 (체크 해제 시 제외 · 기본 가중치 1)")
+        incl, weights = {}, {}
+        for tv in tgts:
+            name = tv["Name"]
+            cA, cB = st.columns([2.6, 1], vertical_alignment="center")
+            incl[name] = cA.checkbox(f"{name} ({direction_arrow(tv)})", value=True, key=f"sum_incl_{name}")
+            weights[name] = cB.number_input(
+                "가중치", min_value=0.0, value=1.0, step=0.1, key=f"sum_w_{name}",
+                label_visibility="collapsed", disabled=not incl[name])
 
-        # 가중 평균 desirability. 행마다 값이 있는 목표들만으로 정규화(NaN 목표는 건너뜀).
-        cols = [tv["Name"] for tv in tgts]
+        sel = [tv for tv in tgts if incl[tv["Name"]]]
+        if not sel:
+            st.caption("최소 1개 이상의 목표를 선택하세요.")
+            return
+
+        # 가중 평균 desirability (선택 목표만). 행마다 값이 있는 목표들만으로 정규화(NaN 목표는 건너뜀).
+        cols = [tv["Name"] for tv in sel]
         w = np.array([weights[c] for c in cols], dtype=float)
         if w.sum() <= 0:
             w = np.ones(len(cols))  # 전부 0 이면 동일 가중으로 폴백
@@ -92,18 +97,19 @@ def _render_summary(df, config_vars, target_vars, cfg_names):
 
         cond = " · ".join(f"{n}={valid.loc[best_idx, n]}" for n in cfg_names)
         sample = valid.loc[best_idx, "샘플명"] if "샘플명" in valid.columns else ""
+        excl_note = f" (제외 {len(tgts) - len(sel)}개)" if len(sel) < len(tgts) else ""
         target_names = ", ".join(
             f"{tv['Name']}({direction_arrow(tv)}"
-            + (f"×{weights[tv['Name']]:g}" if custom_w else "") + ")" for tv in tgts)
+            + (f"×{weights[tv['Name']]:g}" if custom_w else "") + ")" for tv in sel)
         w_note = " · 가중치 적용됨" if custom_w else ""
-        st.markdown(f"**🎯 종합 최적 조건** — 모든 목표({target_names})의 방향·trade-off 를 함께 고려한 균형점{w_note}")
+        st.markdown(f"**🎯 종합 최적 조건** — 선택 목표{excl_note}({target_names})의 방향·trade-off 를 함께 고려한 균형점{w_note}")
         if cond:
             line = f"- 조건: **{cond}**"
             if isinstance(sample, str) and sample.strip():
                 line += f"  ·  샘플: {sample}"
             st.markdown(line)
         vals = []
-        for tv in tgts:
+        for tv in sel:
             v = pd.to_numeric(valid[tv["Name"]], errors="coerce").loc[best_idx]
             unit = f" {tv['Unit']}" if tv.get("Unit") else ""
             vals.append(f"{tv['Name']}{direction_arrow(tv)} {v:.6g}{unit}")

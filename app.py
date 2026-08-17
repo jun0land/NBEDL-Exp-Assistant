@@ -1260,17 +1260,20 @@ elif st.session_state.app_mode == "Dashboard":
 
             with st.container(border=True):
                 colored_header(label="🤖 파레토 최적 후보 (MOBO)", description="qNEHVI 알고리즘으로 여러 목표를 동시에 개선할 다음 실험 후보를 제안합니다.", color_name="orange-70")
-                _mobo_sel = st.multiselect(
-                    "계산에 포함할 목표 지표", target_names_all, default=target_names_all,
-                    key="mobo_targets", help="일부 목표만 골라 파레토 최적을 계산할 수 있습니다. (2개 이상 선택)")
-                _mobo_w = {n: 1.0 for n in _mobo_sel}
-                if len(_mobo_sel) >= 2 and st.checkbox(
-                        "⚙️ 목표별 가중치 (고급)", key="mobo_w_adv",
-                        help="가중치가 큰 목표를 더 중시해 후보를 찾습니다. 기본은 모두 동일."):
-                    _wc = st.columns(min(len(_mobo_sel), 4))
-                    for _wi, _tn in enumerate(_mobo_sel):
-                        _mobo_w[_tn] = _wc[_wi % len(_wc)].number_input(
-                            f"{_tn} 가중치", min_value=0.0, value=1.0, step=0.1, key=f"mobo_w_{_tn}")
+                # 요약과 동일한 방식: 목표를 나열하고 [체크박스=포함] [가중치칸]을 한 줄에.
+                # 체크 해제한 목표는 파레토 계산에서 빠지고, 그 가중치칸은 비활성.
+                st.caption("계산에 포함할 목표와 가중치 (체크 해제 시 제외 · 기본 가중치 1 · 2개 이상 선택)")
+                _mobo_incl, _mobo_w = {}, {}
+                for _tv in st.session_state.target_vars:
+                    _tn = _tv["Name"]
+                    if not _tn:
+                        continue
+                    _cA, _cB = st.columns([2.6, 1], vertical_alignment="center")
+                    _mobo_incl[_tn] = _cA.checkbox(f"{_tn} ({direction_label(_tv)})", value=True, key=f"mobo_incl_{_tn}")
+                    _mobo_w[_tn] = _cB.number_input(
+                        "가중치", min_value=0.0, value=1.0, step=0.1, key=f"mobo_w_{_tn}",
+                        label_visibility="collapsed", disabled=not _mobo_incl[_tn])
+                _mobo_sel = [n for n in target_names_all if _mobo_incl.get(n)]
                 if not _BOTORCH_AVAILABLE:
                     st.error("다중 목표 최적화에는 `botorch` 패키지가 필요합니다. `pip install botorch`로 설치한 뒤 앱을 다시 시작하세요.")
                 elif st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
