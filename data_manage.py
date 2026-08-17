@@ -112,6 +112,16 @@ def _render_summary(df, config_vars, target_vars, cfg_names):
                    "여러 목표가 상충할 때 한쪽으로 치우치지 않은 균형 조건을 고릅니다.")
 
 
+def render_summary(config_vars, target_vars):
+    """요약 통계 · 종합 최적 조건만 따로 렌더한다(데이터 진단 탭에서 호출). 세션의 df 를 읽는다."""
+    df = st.session_state.df_data
+    if df is None or df.empty:
+        st.info("아직 입력된 데이터가 없습니다. '신규 실험 입력' 탭에서 데이터를 추가하세요.")
+        return
+    cfg_names = [v["Name"] for v in config_vars if v.get("Name") and v["Name"] in df.columns]
+    _render_summary(df, config_vars, target_vars, cfg_names)
+
+
 def render_data_manager(config_vars, target_vars, passive_vars):
     df = st.session_state.df_data
     if df is None or df.empty:
@@ -119,8 +129,6 @@ def render_data_manager(config_vars, target_vars, passive_vars):
         return
 
     cfg_names = [v["Name"] for v in config_vars if v.get("Name") and v["Name"] in df.columns]
-
-    _render_summary(df, config_vars, target_vars, cfg_names)
 
     # ---------- 검색 ----------
     query = st.text_input(

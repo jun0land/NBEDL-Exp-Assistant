@@ -25,7 +25,7 @@ def colored_header(label, description="", color_name="orange-70"):
 
 from streamlit_extras.metric_cards import style_metric_cards
 from origin_charts import render_variable_charts
-from data_manage import render_data_manager
+from data_manage import render_data_manager, render_summary
 import analysis
 # 목표 방향(최대화/최소화/특정값 맞추기) 공용 헬퍼 — analysis.py 가 단일 출처다.
 from analysis import (
@@ -300,6 +300,18 @@ div[data-baseweb="input"]:focus-within, div[data-baseweb="select"] > div:focus-w
 </style>
 """
 st.markdown(custom_css, unsafe_allow_html=True)
+
+# 멀티셀렉트(표시/계산 목표 선택) 칩 색: 기본 쨍한 빨강이 눈에 부담 → 부드러운 오렌지 톤으로.
+st.markdown("""
+<style>
+span[data-baseweb="tag"] {
+    background-color: rgba(237, 84, 43, 0.14) !important;
+    color: #9a3618 !important;
+}
+span[data-baseweb="tag"] span, span[data-baseweb="tag"] div { color: #9a3618 !important; }
+span[data-baseweb="tag"] svg { fill: #9a3618 !important; }
+</style>
+""", unsafe_allow_html=True)
 
 # ==========================================
 # 3.5 사용 설명서(메뉴얼) 팝업
@@ -1056,7 +1068,7 @@ elif st.session_state.app_mode == "Dashboard":
             st.session_state.clear()
             st.rerun()
 
-    tab1, tab3, tab4 = st.tabs(["📝 신규 실험 입력", "🔬 데이터 진단", "🤖 AI 최적화 대시보드"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📝 신규 실험 입력", "🗂️ 데이터베이스 관리", "🔬 데이터 진단", "🤖 AI 최적화 대시보드"])
 
     with tab1:
         with st.container(border=True):
@@ -1116,6 +1128,11 @@ elif st.session_state.app_mode == "Dashboard":
                 else:
                     st.warning("삭제할 데이터가 없습니다.")
 
+    with tab2:
+        with st.container(border=True):
+            colored_header(label="🗂️ 전체 실험 데이터 아카이브", description="전체 원본 데이터입니다. 이상치 제거는 데이터를 지우지 않고 '학습 적용' 체크만 바꿉니다. 검색·필터·전체선택/해제로 학습 적용을 일괄 관리하세요.", color_name="orange-70")
+            render_data_manager(st.session_state.config_vars, st.session_state.target_vars, st.session_state.passive_vars)
+
     with tab3:
         with st.container(border=True):
             colored_header(label="🔬 이상치 판정 설정", description="이상치 판정 방법과 유의수준을 정합니다. 강건 평균·제외 목록·박스플롯에 함께 적용됩니다.", color_name="orange-70")
@@ -1126,9 +1143,7 @@ elif st.session_state.app_mode == "Dashboard":
         with st.container(border=True):
             colored_header(label="🔎 이상치 검토 (추천 → 직접 결정)", description="알고리즘이 이상치로 추천한 데이터를 보고, 학습에서 뺄지 직접 정합니다. 자동 제거하지 않습니다.", color_name="orange-70")
             analysis.render_outlier_review(f_names, target_names_all, eff_method, st.session_state.outlier_alpha, key_prefix="diag")
-        with st.container(border=True):
-            colored_header(label="🗂️ 전체 실험 데이터 아카이브", description="전체 원본 데이터입니다. 이상치 제거는 데이터를 지우지 않고 '학습 적용' 체크만 바꿉니다. 검색·필터·전체선택/해제로 학습 적용을 일괄 관리하세요.", color_name="orange-70")
-            render_data_manager(st.session_state.config_vars, st.session_state.target_vars, st.session_state.passive_vars)
+        render_summary(st.session_state.config_vars, st.session_state.target_vars)
         with st.container(border=True):
             colored_header(label="📦 반복 측정 분포 (박스플롯)", description="같은 조건 반복 측정의 분포와 이상치를 봅니다. (학습 적용 데이터만 — 데이터베이스 관리에서 체크 해제한 행은 빠집니다)", color_name="green-70")
             _valid_box = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
