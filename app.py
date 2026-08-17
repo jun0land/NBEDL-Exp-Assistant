@@ -25,7 +25,7 @@ def colored_header(label, description="", color_name="orange-70"):
 
 from streamlit_extras.metric_cards import style_metric_cards
 from origin_charts import render_variable_charts
-from data_manage import render_data_manager, render_summary
+from data_manage import render_data_manager, render_summary, render_target_selectors
 import analysis
 # 목표 방향(최대화/최소화/특정값 맞추기) 공용 헬퍼 — analysis.py 가 단일 출처다.
 from analysis import (
@@ -310,6 +310,21 @@ span[data-baseweb="tag"] {
 }
 span[data-baseweb="tag"] span, span[data-baseweb="tag"] div { color: #9a3618 !important; }
 span[data-baseweb="tag"] svg { fill: #9a3618 !important; }
+
+/* 체크박스 체크색: 기본 쨍한 빨강(#FF4B4B) → 앱 테마 오렌지로 통일 */
+[data-testid="stCheckbox"] span:has(> input[type="checkbox"]:checked) + div {
+    background-color: #ed542b !important;
+    border-color: #ed542b !important;
+}
+
+/* 첫 화면 목표/공정변수 추가(➕)·삭제(🗑) 버튼: 이모지 글리프 폭 차이와 무관하게 크기 통일 */
+.st-key-add_tv button, .st-key-add_cv button,
+div[class*="st-key-del_tv_"] button, div[class*="st-key-del_cv_"] button {
+    width: 44px !important;
+    min-width: 44px !important;
+    padding-left: 0.25rem !important;
+    padding-right: 0.25rem !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -937,13 +952,12 @@ if st.session_state.app_mode == "Setup":
                     else:
                         tv["Target_Value"] = target_value_of(tv)
 
-                    if ct_del.button("🗑", key=f"del_tv_{i}", help="이 목표 지표 삭제", use_container_width=True):
+                    if ct_del.button("🗑", key=f"del_tv_{i}", help="이 목표 지표 삭제", use_container_width=False):
                         st.session_state.target_vars.pop(i)
                         st.session_state["_setup_gen"] = _gen + 1
                         st.rerun()
 
-            _bt_add, _ = st.columns([0.6, 6])
-            if _bt_add.button("➕", key="add_tv", use_container_width=True, help="목표 지표 추가"):
+            if st.button("➕", key="add_tv", use_container_width=False, help="목표 지표 추가"):
                 st.session_state.target_vars.append(
                     {"Old_Name": "", "Name": "", "Unit": "", "Direction": "Maximize", "Target_Value": 0.0})
                 st.rerun()
@@ -975,13 +989,12 @@ if st.session_state.app_mode == "Setup":
                     var["Min"], var["Max"] = 0, 0
                     var["Options"] = c3.text_input("옵션 (쉼표 구분)", value=var.get("Options", ""), key=f"cat_{_gen}_{i}", placeholder="예: CB, Toluene")
 
-                if c_del.button("🗑", key=f"del_cv_{i}", help="이 변수 삭제", use_container_width=True):
+                if c_del.button("🗑", key=f"del_cv_{i}", help="이 변수 삭제", use_container_width=False):
                     st.session_state.config_vars.pop(i)
                     st.session_state["_setup_gen"] = _gen + 1
                     st.rerun()
 
-        _bv_add, _ = st.columns([0.5, 8])
-        if _bv_add.button("➕", key="add_cv", use_container_width=True, help="공정 변수 추가"):
+        if st.button("➕", key="add_cv", use_container_width=False, help="공정 변수 추가"):
             st.session_state.config_vars.append({
                 "Old_Name": "", "Name": "", "Unit": "", "Type": "Real (실수)",
                 "Min": 0.0, "Max": 10.0, "Options": ""
@@ -1263,17 +1276,7 @@ elif st.session_state.app_mode == "Dashboard":
                 # 요약과 동일한 방식: 목표를 나열하고 [체크박스=포함] [가중치칸]을 한 줄에.
                 # 체크 해제한 목표는 파레토 계산에서 빠지고, 그 가중치칸은 비활성.
                 st.caption("계산에 포함할 목표와 가중치 (체크 해제 시 제외 · 기본 가중치 1 · 2개 이상 선택)")
-                _mobo_incl, _mobo_w = {}, {}
-                for _tv in st.session_state.target_vars:
-                    _tn = _tv["Name"]
-                    if not _tn:
-                        continue
-                    _cA, _cB = st.columns([2.6, 1], vertical_alignment="center")
-                    _mobo_incl[_tn] = _cA.checkbox(f"{_tn} ({direction_label(_tv)})", value=True, key=f"mobo_incl_{_tn}")
-                    _mobo_w[_tn] = _cB.number_input(
-                        "가중치", min_value=0.0, value=1.0, step=0.1, key=f"mobo_w_{_tn}",
-                        label_visibility="collapsed", disabled=not _mobo_incl[_tn])
-                _mobo_sel = [n for n in target_names_all if _mobo_incl.get(n)]
+                _mobo_sel, _mobo_w = render_target_selectors(st.session_state.target_vars, "mobo")
                 if not _BOTORCH_AVAILABLE:
                     st.error("다중 목표 최적화에는 `botorch` 패키지가 필요합니다. `pip install botorch`로 설치한 뒤 앱을 다시 시작하세요.")
                 elif st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):

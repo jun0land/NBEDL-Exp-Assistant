@@ -23,6 +23,33 @@ def _distinct_values(series):
         return sorted(vals, key=str)
 
 
+def render_target_selectors(target_vars, key_prefix, per_row=2):
+    """목표별 [체크박스=포함][좁은 가중치칸]을 컴팩트 그리드로 렌더한다(한 줄에 per_row개).
+    체크 해제 시 그 목표는 제외되고 가중치칸은 비활성. (선택된 이름 리스트, {이름:가중치}) 반환.
+    요약 통계·파레토 후보가 같은 모양을 쓰도록 공용."""
+    tvs = [tv for tv in target_vars if tv.get("Name")]
+    incl, weights = {}, {}
+
+    def _arrow(tv):
+        d = tv.get("Direction", "Maximize")
+        return "↑" if "Maximize" in d else ("↓" if "Minimize" in d else "◎")
+
+    for i in range(0, len(tvs), per_row):
+        row = tvs[i:i + per_row]
+        specs = []
+        for _ in row:
+            specs += [1.7, 0.55]
+        cols = st.columns(specs, vertical_alignment="center")
+        for j, tv in enumerate(row):
+            name = tv["Name"]
+            incl[name] = cols[2 * j].checkbox(f"{name} {_arrow(tv)}", value=True, key=f"{key_prefix}_incl_{name}")
+            weights[name] = cols[2 * j + 1].number_input(
+                "w", min_value=0.0, value=1.0, step=0.1, key=f"{key_prefix}_w_{name}",
+                label_visibility="collapsed", disabled=not incl[name])
+    sel = [tv["Name"] for tv in tvs if incl.get(tv["Name"])]
+    return sel, weights
+
+
 def _render_summary(df, config_vars, target_vars, cfg_names):
     """요약 통계 + 목표별 '최적 조건'. 최고 raw 값은 이상치일 수 있으므로 학습 적용
     데이터(수동 제외분 반영) 기준으로, 목표 방향(Max/Min)에 맞는 최적 조건을 보여준다."""
@@ -64,16 +91,9 @@ def _render_summary(df, config_vars, target_vars, cfg_names):
         # 목표별 '포함 여부 + 가중치'를 한 줄에: [체크박스=이름/방향] [가중치칸]. 체크 해제한 목표는
         # 종합 최적 조건 계산에서 빠지고, 그 목표의 가중치칸은 비활성화된다.
         st.caption("종합 최적 조건에 포함할 목표와 가중치 (체크 해제 시 제외 · 기본 가중치 1)")
-        incl, weights = {}, {}
-        for tv in tgts:
-            name = tv["Name"]
-            cA, cB = st.columns([2.6, 1], vertical_alignment="center")
-            incl[name] = cA.checkbox(f"{name} ({direction_arrow(tv)})", value=True, key=f"sum_incl_{name}")
-            weights[name] = cB.number_input(
-                "가중치", min_value=0.0, value=1.0, step=0.1, key=f"sum_w_{name}",
-                label_visibility="collapsed", disabled=not incl[name])
+        sel_names, weights = render_target_selectors(tgts, "sum")
 
-        sel = [tv for tv in tgts if incl[tv["Name"]]]
+        sel = [tv for tv in tgts if tv["Name"] in sel_names]
         if not sel:
             st.caption("최소 1개 이상의 목표를 선택하세요.")
             return
