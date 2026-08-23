@@ -689,9 +689,10 @@ def process_robust_data_multi(df, feature_cols, target_cols):
         robust_Y.append(row_y)
     return robust_X, robust_Y
 
-MOBO_HYPERVOLUME_MAX_OBJECTIVES = 4  # 이보다 목표가 많으면 스칼라화(ParEGO) 경로로 자동 전환
+MOBO_HYPERVOLUME_MAX_OBJECTIVES = 4  # 자동 모드 기준: 이보다 목표가 많으면 스칼라화(ParEGO)로 전환
+MOBO_QLOGNEHVI_HARD_CAP = 6          # 정밀 모드라도 이보다 많으면 qLogNEHVI 불가(8분+) -> ParEGO
 
-def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, weights=None, n_candidates=3):
+def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, weights=None, n_candidates=3, hv_cutoff=None):
     """다중목표 베이지안 최적화 (BoTorch).
 
     단일목표 EI는 "현재 최고값 대비 개선 기댓값"을 계산하는데, 이를 다차원으로 일반화한 것이
@@ -792,7 +793,8 @@ def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, weig
     standard_bounds[1] = 1.0
     sampler = SobolQMCNormalSampler(sample_shape=torch.Size([64]))
 
-    if n_obj <= MOBO_HYPERVOLUME_MAX_OBJECTIVES:
+    cutoff = MOBO_HYPERVOLUME_MAX_OBJECTIVES if hv_cutoff is None else hv_cutoff
+    if n_obj <= cutoff:
         # 정확한 파레토 하이퍼볼륨 기반 (qLogNEHVI) — 목표가 적을 때만 감당 가능.
         Y_objw = Y_obj * w
         y_range = (Y_objw.max(dim=0).values - Y_objw.min(dim=0).values).clamp(min=1e-6)
@@ -1277,6 +1279,31 @@ elif st.session_state.app_mode == "Dashboard":
                 # 체크 해제한 목표는 파레토 계산에서 빠지고, 그 가중치칸은 비활성.
                 st.caption("계산에 포함할 목표와 가중치 (체크 해제 시 제외 · 기본 가중치 1 · 2개 이상 선택)")
                 _mobo_sel, _mobo_w = render_target_selectors(st.session_state.target_vars, "mobo")
+
+                # 계산 방식: 정확도(qLogNEHVI) ↔ 속도(ParEGO) 트레이드오프. 기준은 '목표 개수'.
+                st.markdown("**계산 방식** — 정확도와 속도 중 어디에 비중을 둘지")
+                _mode = st.radio(
+                    "계산 방식", ["자동 (권장)", "정밀 우선", "속도 우선"],
+                    horizontal=True, label_visibility="collapsed", key="mobo_mode",
+                )
+                st.caption(
+                    f"• **자동** — 목표 **{MOBO_HYPERVOLUME_MAX_OBJECTIVES}개 이하**면 정밀(qLogNEHVI), 초과면 빠름(ParEGO). 속도·정확도 균형.  \n"
+                    f"• **정밀 우선** — 목표 **{MOBO_QLOGNEHVI_HARD_CAP}개까지** 파레토 프론트를 정확히 넓히는 후보를 찾음. 신뢰도 최고, 대신 느림(6개는 수 분).  \n"
+                    f"• **속도 우선** — 개수 무관 항상 ParEGO. 다양한 트레이드오프를 빠르게 훑지만 정밀도는 낮음."
+                )
+                _cutoff = {"자동 (권장)": MOBO_HYPERVOLUME_MAX_OBJECTIVES,
+                           "정밀 우선": MOBO_QLOGNEHVI_HARD_CAP, "속도 우선": 0}[_mode]
+                # 현재 선택 목표 수 기준으로 '실제 실행될 알고리즘 + 예상 시간'을 미리 안내.
+                _n_sel = len(_mobo_sel)
+                if _n_sel >= 2:
+                    _tt = {2: "약 2초", 3: "약 10초", 4: "약 20초", 5: "약 1분", 6: "수 분"}
+                    if _n_sel <= _cutoff:
+                        st.success(f"현재 선택 **{_n_sel}개** → 정밀(qLogNEHVI) 실행 · 예상 {_tt.get(_n_sel, '수 분')}. 파레토 프론트를 정확히 넓히는 후보.")
+                    elif _mode == "정밀 우선" and _n_sel > MOBO_QLOGNEHVI_HARD_CAP:
+                        st.warning(f"현재 선택 **{_n_sel}개**는 정밀 상한({MOBO_QLOGNEHVI_HARD_CAP}개)을 넘어 qLogNEHVI가 사실상 끝나지 않습니다(8분+). 빠름(ParEGO)으로 진행합니다 — 신뢰도를 높이려면 목표를 {MOBO_QLOGNEHVI_HARD_CAP}개 이하로 줄이세요.")
+                    else:
+                        st.info(f"현재 선택 **{_n_sel}개** → 빠름(ParEGO) 실행 · 예상 수 초~수십 초. 탐색적 후보(정밀도는 낮음).")
+
                 if not _BOTORCH_AVAILABLE:
                     st.error("다중 목표 최적화에는 `botorch` 패키지가 필요합니다. `pip install botorch`로 설치한 뒤 앱을 다시 시작하세요.")
                 elif st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
@@ -1295,7 +1322,8 @@ elif st.session_state.app_mode == "Dashboard":
                             try:
                                 candidates, predicted_Y = run_mobo(
                                     X_train, Y_train, st.session_state.config_vars, directions,
-                                    target_values=t_values, weights=_weights, n_candidates=3
+                                    target_values=t_values, weights=_weights, n_candidates=3,
+                                    hv_cutoff=_cutoff,
                                 )
                             except Exception as e:
                                 candidates, predicted_Y = None, None
