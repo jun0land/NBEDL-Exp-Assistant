@@ -16,6 +16,7 @@ import base64
 import functools
 import json
 import os
+import re
 
 import numpy as np
 import pandas as pd
@@ -90,6 +91,189 @@ _MARKER_SYMBOLS = [
 
 def marker_symbol(i: int) -> str:
     return _MARKER_SYMBOLS[i % len(_MARKER_SYMBOLS)]
+
+
+# =====================================================================
+# Origin 24색 팔레트 색 피커 (FET-studio/fet_app/ui/color_picker.py 그대로 이식)
+#
+# 포팅 출처: photodetector-app/pd_app/ui/panel_traces.py 의 _color_dialog /
+# _color_control 을 FET-studio 가 재사용 컴포넌트로 다듬은 버전. 스와치 그리드,
+# 정사각형 트리거 버튼, 커스텀 색을 HTML5 <input type="color"> + JS 동기화로
+# 다루는 우회법까지 그대로 가져왔다.
+#
+# 왜 커스텀 색에 st.color_picker 를 안 쓰는가: 누르면 브라우저 네이티브 팝업이
+# 뜨는데, 그 클릭이 st.dialog 모달의 "바깥 클릭 시 닫기" 판정에 걸려 색을
+# 고르려는 순간 다이얼로그가 꺼진다. 그래서 네이티브 <input type="color"> 를
+# components.html 이 만드는 iframe 안에 두어 부모 문서의 클릭 감지에서 격리시키고,
+# 그 oninput 에서 JS 로 옆 st.text_input(hex 칸) 값을 네이티브 setter 로 갱신 +
+# input 이벤트를 dispatch 해 Streamlit 에 알린다.
+# =====================================================================
+ORIGIN_PALETTE = {
+    "Black": "#000000", "Red": "#FF0000", "Green": "#00FF00", "Blue": "#0000FF",
+    "Cyan": "#00FFFF", "Magenta": "#FF00FF", "Yellow": "#FFFF00",
+    "Dark Yellow": "#808000", "Navy": "#000080", "Purple": "#800080",
+    "Wine": "#800000", "Olive": "#008000", "Dark Cyan": "#008080",
+    "Royal": "#0000A0", "Orange": "#FF8000", "Violet": "#8000FF",
+    "Pink": "#FF0080", "White": "#FFFFFF", "LT Gray": "#C0C0C0",
+    "Gray": "#808080", "LT Yellow": "#FFFF80", "LT Cyan": "#80FFFF",
+    "LT Magenta": "#FF80FF", "Dark Gray": "#404040",
+}
+
+_CP_CUSTOM = "Custom"
+_CP_GRID_COLS = 8
+_CP_SWATCH_SIZE = "32px"
+_CP_TARGET = "_origin_color_picker_target"
+_CP_UNSAFE = re.compile(r"\W+")
+_CP_BRIGHT_CUTOFF = 150.0
+
+
+def cp_normalize_hex(hex_color, default: str = "#000000") -> str:
+    """'ff8000' / '#f80' / '#FF8000' -> '#FF8000'. 못 읽으면 default."""
+    h = str(hex_color).strip().upper().lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    if len(h) != 6 or any(c not in "0123456789ABCDEF" for c in h):
+        return default
+    return "#" + h
+
+
+def cp_color_name(hex_color) -> str:
+    """hex -> Origin 팔레트 이름 역조회. 팔레트에 없으면 "Custom"."""
+    h = cp_normalize_hex(hex_color, default="")
+    if not h:
+        return _CP_CUSTOM
+    return next((k for k, v in ORIGIN_PALETTE.items()
+                 if cp_normalize_hex(v) == h), _CP_CUSTOM)
+
+
+def cp_color_caption(hex_color) -> str:
+    name = cp_color_name(hex_color)
+    return cp_normalize_hex(hex_color) if name == _CP_CUSTOM else name
+
+
+def _cp_contrast_text(hex_color) -> str:
+    h = cp_normalize_hex(hex_color).lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return "#000000" if (0.299 * r + 0.587 * g + 0.114 * b) > _CP_BRIGHT_CUTOFF else "#FFFFFF"
+
+
+def _cp_slug(key: str) -> str:
+    return _CP_UNSAFE.sub("_", str(key))
+
+
+def _cp_trigger_key(key: str) -> str:
+    return f"origincp_trig_{_cp_slug(key)}"
+
+
+def _cp_custom_key(key: str) -> str:
+    return f"origincp_custom_{_cp_slug(key)}"
+
+
+def _cp_swatch_css(class_key: str, hex_color: str, *, size: str | None = None) -> str:
+    """.st-key-<key> 컨벤션으로 그 버튼 하나만 색 스와치처럼 칠한다."""
+    box = (f"width: {size} !important; height: {size} !important; "
+           f"min-width: {size} !important; min-height: {size} !important; "
+           f"padding: 0 !important; display: block !important; "
+           f"margin: 0 auto !important; ") if size else ""
+    return (
+        f"<style>"
+        f".st-key-{class_key} button {{"
+        f" background: {hex_color} !important;"
+        f" color: {_cp_contrast_text(hex_color)} !important;"
+        f" border: 1px solid rgba(0,0,0,0.35) !important;"
+        f" border-radius: 6px !important; {box}"
+        f"}}"
+        f".st-key-{class_key} button:hover {{"
+        f" border: 2px solid #000 !important;"
+        f" color: {_cp_contrast_text(hex_color)} !important;"
+        f"}}"
+        f".st-key-{class_key} button p {{"
+        f" color: {_cp_contrast_text(hex_color)} !important;"
+        f"}}"
+        f"</style>"
+    )
+
+
+def _cp_native_color_input_html(current: str, hex_key: str) -> str:
+    """iframe 안에 띄울 HTML5 <input type="color">. oninput 에서 부모 문서의
+    hex 텍스트 인풋을 네이티브 setter 로 갱신 + input 이벤트를 dispatch한다."""
+    return (
+        f'<div style="display:flex; align-items:center; justify-content:center;">'
+        f'<input type="color" value="{cp_normalize_hex(current)}" '
+        f'style="width:38px; height:38px; padding:0; border:1px solid #ccc; '
+        f'border-radius:6px; cursor:pointer;" '
+        f'oninput="'
+        f"var hexInput = window.parent.document.querySelector('.st-key-{hex_key} input');"
+        f'if (hexInput) {{'
+        f"var nativeSetter = Object.getOwnPropertyDescriptor("
+        f"window.HTMLInputElement.prototype, 'value').set;"
+        f'nativeSetter.call(hexInput, this.value);'
+        f"hexInput.dispatchEvent(new Event('input', {{ bubbles: true }}));"
+        f'}}">'
+        f'</div>'
+    )
+
+
+@st.dialog("🎨 색 선택")
+def _origin_palette_dialog() -> None:
+    """Origin 24색 그리드 + 커스텀 색 폴백. 편집 대상은 세션 상태에서 읽는다."""
+    tgt = st.session_state.get(_CP_TARGET)
+    if not tgt:
+        st.caption("편집할 색 대상을 찾지 못했습니다.")
+        return
+    target, field = tgt["target"], tgt["field"]
+    label, slug = tgt["label"], tgt["slug"]
+    current = cp_normalize_hex(target.get(field, "#000000"))
+
+    st.markdown(f"**{label}** · 현재 `{cp_color_caption(current)}`")
+    st.caption("Origin 24색 팔레트")
+
+    items = list(ORIGIN_PALETTE.items())
+    for start in range(0, len(items), _CP_GRID_COLS):
+        cols = st.columns(_CP_GRID_COLS)
+        for offset, (name, hexv) in enumerate(items[start:start + _CP_GRID_COLS]):
+            with cols[offset]:
+                btn_key = f"origincp_sw_{slug}_{start + offset}"
+                st.markdown(_cp_swatch_css(btn_key, hexv, size=_CP_SWATCH_SIZE),
+                            unsafe_allow_html=True)
+                if st.button(" ", key=btn_key, help=name, use_container_width=False):
+                    target[field] = hexv
+                    st.rerun()
+
+    st.divider()
+    st.caption("커스텀 색상")
+    hex_key = _cp_custom_key(tgt["key"])
+    c_pick, c_hex, c_apply = st.columns([1, 2, 2], vertical_alignment="bottom")
+    with c_pick:
+        components.html(_cp_native_color_input_html(current, hex_key), height=56)
+    with c_hex:
+        typed = st.text_input("Hex 코드", value=current, key=hex_key,
+                              max_chars=7, label_visibility="collapsed")
+    with c_apply:
+        if st.button("설정 적용", key=f"origincp_apply_{slug}", type="primary",
+                     use_container_width=True):
+            target[field] = cp_normalize_hex(typed, default=current)
+            st.rerun()
+
+
+def origin_color_picker(label: str, target: dict, field: str, *,
+                        key: str, default: str = "#000000") -> str:
+    """색 하나를 고르는 트리거 버튼(정사각형 스와치). 고른 색은 target[field] 에 바로 들어간다.
+    반환값은 지금 적용돼 있는 색(#RRGGBB). target 은 세션 상태에 보관된 dict 여야
+    리런 사이에 값이 유지된다(예: st.session_state 안의 {목표명: hex} dict)."""
+    current = cp_normalize_hex(target.get(field, default), default=default)
+    slug = _cp_slug(key)
+    btn_key = _cp_trigger_key(key)
+
+    st.caption(label)
+    st.markdown(_cp_swatch_css(btn_key, current, size=_CP_SWATCH_SIZE), unsafe_allow_html=True)
+    if st.button(" ", key=btn_key, use_container_width=False,
+                 help=f"{label} — 현재 {cp_color_caption(current)} · 클릭해서 Origin 팔레트에서 고르기"):
+        st.session_state.pop(_cp_custom_key(key), None)
+        st.session_state[_CP_TARGET] = {"target": target, "field": field,
+                                        "label": label, "slug": slug, "key": key}
+        _origin_palette_dialog()
+    return current
 
 
 def _normalize(series) -> pd.Series:
@@ -320,6 +504,19 @@ def render_variable_charts(df_valid, config_vars, target_vars, key_prefix="vardi
     if _ff:
         st.markdown(f"<style>{_ff}</style>", unsafe_allow_html=True)
 
+    # 등록된 목표가 많으면 그래프 한 장에 다 겹쳐 그리기보다 필요한 것만 골라 보는 게
+    # 낫다 — 기본은 전체 표시(기존 동작 유지), 여기서 줄이면 그래프·범례·색상칸에 전부 반영.
+    all_target_names = [tv["Name"] for tv in targets]
+    sel_target_names = st.multiselect(
+        "표시할 목표 지표", all_target_names, default=all_target_names,
+        key=f"{key_prefix}_sel_targets",
+        help="계산에 포함했는지와 무관하게, 이 그래프에 겹쳐 그릴 목표만 고릅니다.",
+    )
+    targets = [tv for tv in targets if tv["Name"] in sel_target_names]
+    if not targets:
+        st.info("표시할 목표 지표를 선택하세요.")
+        return
+
     # 공통 스타일 컨트롤 (전 그래프 공통 1세트)
     with st.expander("🎨 그래프 스타일 (전체 공통)", expanded=False):
         cS = st.columns(4)
@@ -349,12 +546,17 @@ def render_variable_charts(df_valid, config_vars, target_vars, key_prefix="vardi
 
         default_y_title = "정규화 목표값 (0–1)" if normalize else "목표값 (원본 단위)"
         y_title = st.text_input("Y축 제목 (공통)", default_y_title, key=f"{key_prefix}_ytitle")
-        st.caption("목표별 선 색상 (Origin 팔레트 기본)")
+        st.caption("목표별 선 색상 — 클릭해서 Origin 24색 팔레트에서 고르거나 커스텀 색 입력")
+        # target[field] 패턴은 리런 사이에 유지되는 dict 참조가 필요하므로, 세션 상태에
+        # {목표명: hex} dict 를 하나 두고 그 안의 값을 직접 편집한다.
+        color_store = st.session_state.setdefault(f"{key_prefix}_colorstore", {})
         ccols = st.columns(min(len(targets), 6))
         colors = {}
         for i, tv in enumerate(targets):
-            colors[tv["Name"]] = ccols[i % len(ccols)].color_picker(
-                tv["Name"], origin_color(i), key=f"{key_prefix}_col_{i}")
+            with ccols[i % len(ccols)]:
+                colors[tv["Name"]] = origin_color_picker(
+                    tv["Name"], color_store, tv["Name"],
+                    key=f"{key_prefix}_col_{i}", default=origin_color(i))
 
     # 공정 변수들은 서로 상관될 수 있어(다중공선성), 한 변수의 효과를 보려면 나머지 변수를 고정해야
     # 교란이 줄어든다. 각 변수에 제약(숫자=범위, 범주=허용값)을 두고, 각 그래프는 자기 축 변수를

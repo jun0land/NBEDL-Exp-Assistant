@@ -4,8 +4,10 @@ import numpy as np
 import io
 import os
 import base64
+import math
 from skopt import Optimizer
 from skopt.space import Real, Integer, Categorical
+from skopt.acquisition import gaussian_ei
 import streamlit.components.v1 as components
 # colored_header(streamlit_extras)는 화면에 deprecated 경고 박스를 띄운다 — 같은 시그니처의
 # 네이티브 헬퍼로 대체해 경고를 없애고 헤더 세로 여백도 더 타이트하게 만든다.
@@ -58,6 +60,9 @@ try:
     from botorch.acquisition.objective import GenericMCObjective
     from botorch.acquisition.multi_objective.objective import GenericMCMultiOutputObjective
     from botorch.utils.multi_objective.scalarization import get_chebyshev_scalarization
+    # EI/하이퍼볼륨 개선량을 후보 카드에 같이 보여주기 위한 임포트.
+    from botorch.utils.multi_objective.hypervolume import Hypervolume
+    from botorch.utils.multi_objective.pareto import is_non_dominated
     from botorch.sampling.normal import SobolQMCNormalSampler
     from botorch.optim import optimize_acqf
     from botorch.utils.transforms import normalize, unnormalize
@@ -692,6 +697,25 @@ def process_robust_data_multi(df, feature_cols, target_cols):
 MOBO_HYPERVOLUME_MAX_OBJECTIVES = 4  # 자동 모드 기준: 이보다 목표가 많으면 스칼라화(ParEGO)로 전환
 MOBO_QLOGNEHVI_HARD_CAP = 6          # 정밀 모드라도 이보다 많으면 qLogNEHVI 불가(8분+) -> ParEGO
 
+
+def improvement_label(ratio):
+    """기대 개선량(EI/하이퍼볼륨 개선)을 '관측 스프레드 대비 비율'로 등급화한다.
+
+    절대값만 보면 단위·스케일에 따라 커 보이거나 작아 보일 뿐 판단 기준이 안 된다 —
+    지금까지 관측된 값들이 흩어진 정도(스프레드) 대비 상대적으로 얼마나 큰 개선을
+    기대하는지를 봐야 "더 해볼 가치가 있는지"를 가늠할 수 있다. 임계값(1%/5%/15%)은
+    엄밀한 통계 기준이 아니라 실무적으로 쓸 만한 경험적 구간이다.
+    """
+    if ratio is None:
+        return "판단 불가 (비교 기준 데이터 부족)"
+    if ratio < 0.01:
+        return "매우 낮음 — 모델은 이 지점에서 더 나아질 여지가 거의 없다고 봅니다"
+    if ratio < 0.05:
+        return "낮음 — 소폭 개선 정도만 기대됩니다"
+    if ratio < 0.15:
+        return "보통 — 어느 정도 개선 가능성이 있습니다"
+    return "높음 — 이 지점에서 상당한 개선 가능성이 있다고 모델이 봅니다"
+
 def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, weights=None, n_candidates=3, hv_cutoff=None):
     """다중목표 베이지안 최적화 (BoTorch).
 
@@ -719,7 +743,12 @@ def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, weig
     objective 단계에서만 적용한다 — 이렇게 해야 Target 모드에서 |y-목표값| 의 꺾인 형태를
     GP가 억지로 근사하지 않고, 후보의 예측값도 원본 단위로 그대로 보여줄 수 있다.
 
-    반환: (candidates_raw, predicted_Y_raw) - 둘 다 원래 단위(부호 반전 없이).
+    반환: (candidates_raw, predicted_Y_raw, ei_info).
+    candidates_raw/predicted_Y_raw는 둘 다 원래 단위(부호 반전 없이).
+    ei_info는 기대 개선량 표시용 — 두 경로 모두 {"mode", "items": [{"value","ratio"}, ...]}
+    형태(후보 순서대로 하나씩). qLogNEHVI 경로("hv")는 그리디하게 고른 순서대로 "이미 고른
+    후보들 대비 이 후보를 더했을 때의 한계 하이퍼볼륨 증가량"이라 뒤로 갈수록 작아지는 게
+    정상이다. ParEGO 경로("parego")는 후보마다 가중치가 달라 서로 다른 스칼라화 기준의 EI.
     """
     torch.manual_seed(0)
 
@@ -794,6 +823,7 @@ def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, weig
     sampler = SobolQMCNormalSampler(sample_shape=torch.Size([64]))
 
     cutoff = MOBO_HYPERVOLUME_MAX_OBJECTIVES if hv_cutoff is None else hv_cutoff
+    ei_info = None
     if n_obj <= cutoff:
         # 정확한 파레토 하이퍼볼륨 기반 (qLogNEHVI) — 목표가 적을 때만 감당 가능.
         Y_objw = Y_obj * w
@@ -804,21 +834,31 @@ def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, weig
             sampler=sampler, prune_baseline=True,
             objective=GenericMCMultiOutputObjective(lambda Y, X=None: obj_transform(Y, X) * w),
         )
-        candidates_norm, _ = optimize_acqf(
+        candidates_norm, acq_val = optimize_acqf(
             acq_function=acq, bounds=standard_bounds, q=n_candidates,
             num_restarts=5, raw_samples=128,
             options={"batch_limit": 5, "maxiter": 200}, sequential=True,
         )
+        # sequential=True 라 후보를 하나씩 그리디하게 고르고, acq_val 은 그 순서대로
+        # "이미 고른 후보들에 이 후보를 더했을 때의 한계 하이퍼볼륨 증가량"이다(shape=(q,)) —
+        # 뒤로 갈수록 겹치는 영역이 늘어 값이 작아지는 게 정상이다. 로그 스케일이라
+        # 지수변환해서 실제 부피 단위로 되돌리고, 현재 파레토 프론트 부피 대비 비율로 해석한다.
+        hv_gains = [math.exp(float(v)) for v in acq_val.flatten()]
+        pareto_mask = is_non_dominated(Y_objw)
+        current_hv = float(Hypervolume(ref_point=ref_point).compute(Y_objw[pareto_mask]))
+        items = [{"value": g, "ratio": (g / current_hv) if current_hv > 1e-9 else None} for g in hv_gains]
+        ei_info = {"mode": "hv", "items": items}
     else:
         # ParEGO 스칼라화 — 후보마다 다른 랜덤 가중치로 목표를 하나의 값으로 합쳐
         # 평범한 단일목표 EI를 최적화한다 (하이퍼볼륨 계산 없음 -> 목표 개수에 선형).
         cand_rows = []
+        parego_items = []
         for i in range(n_candidates):
             gen = torch.Generator().manual_seed(i)
-            weights = torch.rand(n_obj, generator=gen, dtype=torch.double) * w
-            weights = weights / weights.sum()
+            rand_w = torch.rand(n_obj, generator=gen, dtype=torch.double) * w
+            rand_w = rand_w / rand_w.sum()
             # 모델은 원본 값을 내보내므로 방향 변환을 먼저 태운 뒤 체비셰프 스칼라화한다.
-            cheb = get_chebyshev_scalarization(weights=weights, Y=Y_obj)
+            cheb = get_chebyshev_scalarization(weights=rand_w, Y=Y_obj)
             scalarized_obj = GenericMCObjective(
                 lambda Z, X=None, _c=cheb: _c(obj_transform(Z), X)
             )
@@ -826,13 +866,21 @@ def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, weig
                 model=model, X_baseline=X_norm, objective=scalarized_obj,
                 sampler=sampler, prune_baseline=True,
             )
-            cand, _ = optimize_acqf(
+            cand, acq_val = optimize_acqf(
                 acq_function=acq, bounds=standard_bounds, q=1,
                 num_restarts=5, raw_samples=128,
                 options={"batch_limit": 5, "maxiter": 200},
             )
             cand_rows.append(cand)
+            # 후보마다 가중치가 달라 스칼라화 값의 스케일도 다르므로, 그 후보의 스칼라화
+            # 기준 관측 스프레드 대비 비율로 각자 따로 해석한다.
+            with torch.no_grad():
+                scal_obs = cheb(obj_transform(Y_raw))
+            spread = float((scal_obs.max() - scal_obs.min()).clamp(min=1e-9))
+            ei_val = math.exp(float(acq_val))
+            parego_items.append({"value": ei_val, "ratio": ei_val / spread if spread > 0 else None})
         candidates_norm = torch.cat(cand_rows, dim=0)
+        ei_info = {"mode": "parego", "items": parego_items}
 
     candidates_raw_t = unnormalize(candidates_norm, bounds=bounds_raw)
 
@@ -842,7 +890,7 @@ def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, weig
 
     candidates_raw = [decode_x(row.tolist()) for row in candidates_raw_t]
     predicted_Y = posterior_mean_raw.tolist()
-    return candidates_raw, predicted_Y
+    return candidates_raw, predicted_Y, ei_info
 
 @st.cache_data(show_spinner=False, max_entries=3)
 def build_excel_bytes(df, config_vars, target_vars, meta_data):
@@ -1197,7 +1245,9 @@ elif st.session_state.app_mode == "Dashboard":
             valid_df = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
 
             with st.container(border=True):
-                colored_header(label="🤖 베이지안 추천 차기 조건", description="가우시안 프로세스 알고리즘에 기반하여 제안된 3가지 최적 조건 셋입니다.", color_name="orange-70")
+                colored_header(label="🤖 베이지안 추천 차기 조건", description="가우시안 프로세스 알고리즘에 기반하여 제안된 최적 조건 후보입니다.", color_name="orange-70")
+                n_candidates = st.slider("추천 후보 개수", 1, 4, 3, key="single_n_cand",
+                                         help="불확실성이 높은(=더 알아볼 가치가 있는) 구간을 골라 후보를 추천합니다. 개수를 늘리면 다양한 지점을 동시에 실험해볼 수 있습니다.")
                 if st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
                     if len(valid_df) < 2:
                         st.warning("정밀 분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
@@ -1230,37 +1280,83 @@ elif st.session_state.app_mode == "Dashboard":
                             # 텅 비어 skopt.Optimizer.tell()이 내부에서 np.argmin([])으로 죽는다 —
                             # 계산 전에 걸러서 사용자에게 원인을 알려준다.
                             next_points = None
+                            ei_values = None
+                            y_spread = None
                             if X_train_safe:
-                                opt = Optimizer(dimensions=ai_spaces, base_estimator="GP", acq_func="EI", random_state=None)
+                                # skopt Optimizer의 n_initial_points 기본값은 10 — 그만큼 쌓이기
+                                # 전에는 GP를 학습하지 않고 그냥 랜덤(quasi-random) 점을 반환한다.
+                                # 이 앱은 "최소 2개"부터 계산 가능하다고 안내하므로, 그 약속대로
+                                # 2개부터 실제 GP+EI를 쓰도록 맞춘다. (models가 안 생기면
+                                # opt.models[-1]에서 IndexError가 나 EI 표시가 조용히 빠지고,
+                                # 무엇보다 추천 자체가 사실상 랜덤이 되는 문제였다.)
+                                opt = Optimizer(dimensions=ai_spaces, base_estimator="GP", acq_func="EI",
+                                                random_state=None, n_initial_points=2)
                                 opt.tell(X_train_safe, y_train_fit_safe)
-                                next_points = opt.ask(n_points=3)
+                                next_points = opt.ask(n_points=n_candidates)
+                                # 후보 지점들의 실제 EI 값을 뽑아 "이 지점이 얼마나 더 알아볼
+                                # 가치가 있는지"를 후보 카드에 같이 보여준다. ask()가 고른 점이
+                                # 곧 EI를 최대화하는 점들이지만 그 값 자체는 따로 계산해야 한다.
+                                try:
+                                    X_trans = opt.space.transform(next_points)
+                                    ei_values = gaussian_ei(
+                                        X_trans, opt.models[-1], y_opt=min(y_train_fit_safe)
+                                    ).tolist()
+                                    y_spread = max(y_train_fit_safe) - min(y_train_fit_safe)
+                                except Exception:
+                                    ei_values = None
 
                         if next_points is None:
                             st.error("등록된 유효 데이터가 모두 공정 변수의 설정 범위(최소~최대값) 밖에 있어 계산할 수 없습니다. 환경 설정에서 범위를 확인하거나 데이터를 다시 확인하세요.")
+                            st.session_state.pop("single_ai_result", None)
                         else:
                             # 목표 지표별로 직전 결과를 따로 기억한다 (다른 지표로 전환 후 재계산했을 때
                             # 이전 지표의 결과와 잘못 비교되지 않도록).
                             if "prev_next_points_by_target" not in st.session_state:
                                 st.session_state.prev_next_points_by_target = {}
-                            if st.session_state.prev_next_points_by_target.get(t_name) == next_points:
-                                st.info("💡 **AI 수렴 상태 판단:** 현재 입력된 데이터 풀 안에서 해당 지점이 가장 최적의 공정 조건 범위로 강력하게 매핑되었습니다.")
-
+                            converged = st.session_state.prev_next_points_by_target.get(t_name) == next_points
                             st.session_state.prev_next_points_by_target[t_name] = next_points
 
-                            for i, points in enumerate(next_points):
-                                with st.container(border=True):
-                                    st.markdown(f"<h5 style='margin:0; font-weight: 800; color: #ed542b;'>실험 후보 {i+1}</h5>", unsafe_allow_html=True)
-                                    st.divider()
-                                    cols_rec = st.columns(len(f_names))
-                                    for idx, (var, val) in enumerate(zip(st.session_state.config_vars, points)):
-                                        unit_str = f" {var['Unit']}" if var.get("Unit") else ""
-                                        cols_rec[idx].metric(label=var["Name"], value=f"{round(val, 3)}{unit_str}")
-                                    style_metric_cards(background_color="transparent", border_left_color="#ed542b", border_color="transparent", box_shadow=False)
+                            # 계산 결과를 세션에 저장해둔다 — 저장 안 하면 아래 그래프 설정을
+                            # 건드리는 것만으로도 리런이 일어나 이 if 블록(버튼이 눌린 그 순간만
+                            # True)을 다시 안 타서 방금 계산한 결과가 화면에서 사라진다.
+                            st.session_state.single_ai_result = {
+                                "t_name": t_name, "next_points": next_points,
+                                "X_train": X_train, "y_train": y_train, "f_names": f_names,
+                                "converged": converged, "ei_values": ei_values, "y_spread": y_spread,
+                            }
 
-                            with st.expander("🔍 AI 연산 피팅 로그 데이터"):
-                                debug_df = pd.DataFrame(X_train, columns=f_names)
-                                debug_df[t_name] = y_train
-                                st.dataframe(debug_df, use_container_width=True)
+                # 버튼이 눌린 순간이 아니어도(=아래 그래프 설정을 건드려 리런됐어도) 세션에
+                # 저장된 결과가 있고 지금 목표와 일치하면 계속 그린다.
+                res = st.session_state.get("single_ai_result")
+                if res and res["t_name"] == t_name:
+                    if res["converged"]:
+                        st.info("💡 **AI 수렴 상태 판단:** 현재 입력된 데이터 풀 안에서 해당 지점이 가장 최적의 공정 조건 범위로 강력하게 매핑되었습니다.")
+
+                    if res.get("ei_values"):
+                        st.caption("📈 **기대 개선량(EI)**: 이 지점에서 실제로 실험했을 때 지금까지의 최고 기록보다 "
+                                   "얼마나 더 나아질지 모델이 기대하는 크기입니다. 값이 클수록 더 알아볼 가치가 "
+                                   "큰 지점, 0에 가까우면 모델이 보기에 개선 여지가 거의 없는 지점입니다.")
+
+                    for i, points in enumerate(res["next_points"]):
+                        with st.container(border=True):
+                            st.markdown(f"<h5 style='margin:0; font-weight: 800; color: #ed542b;'>실험 후보 {i+1}</h5>", unsafe_allow_html=True)
+                            st.divider()
+                            cols_rec = st.columns(len(res["f_names"]))
+                            for idx, (var, val) in enumerate(zip(st.session_state.config_vars, points)):
+                                unit_str = f" {var['Unit']}" if var.get("Unit") else ""
+                                cols_rec[idx].metric(label=var["Name"], value=f"{round(val, 3)}{unit_str}")
+                            style_metric_cards(background_color="transparent", border_left_color="#ed542b", border_color="transparent", box_shadow=False)
+                            if res.get("ei_values"):
+                                ei = res["ei_values"][i]
+                                spread = res.get("y_spread") or 0
+                                ratio = (ei / spread) if spread > 1e-12 else None
+                                ratio_txt = f" (관측 스프레드 대비 {ratio*100:.1f}%)" if ratio is not None else ""
+                                st.caption(f"기대 개선량(EI): {ei:.4g}{ratio_txt} — {improvement_label(ratio)}")
+
+                    with st.expander("🔍 AI 연산 피팅 로그 데이터"):
+                        debug_df = pd.DataFrame(res["X_train"], columns=res["f_names"])
+                        debug_df[res["t_name"]] = res["y_train"]
+                        st.dataframe(debug_df, use_container_width=True)
 
         else:
             # ---- 목표 지표 2개 이상: 다중목표 베이지안 최적화 (MOBO, qNEHVI/BoTorch) ----
@@ -1304,6 +1400,9 @@ elif st.session_state.app_mode == "Dashboard":
                     else:
                         st.info(f"현재 선택 **{_n_sel}개** → 빠름(ParEGO) 실행 · 예상 수 초~수십 초. 탐색적 후보(정밀도는 낮음).")
 
+                n_candidates = st.slider("추천 후보 개수", 1, 4, 3, key="mobo_n_cand",
+                                         help="불확실성이 높은(=더 알아볼 가치가 있는) 구간을 골라 후보를 추천합니다. 개수를 늘리면 파레토 프론트의 더 다양한 지점을 동시에 실험해볼 수 있습니다.")
+
                 if not _BOTORCH_AVAILABLE:
                     st.error("다중 목표 최적화에는 `botorch` 패키지가 필요합니다. `pip install botorch`로 설치한 뒤 앱을 다시 시작하세요.")
                 elif st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
@@ -1320,37 +1419,71 @@ elif st.session_state.app_mode == "Dashboard":
                             _weights = [_mobo_w[tv["Name"]] for tv in _sel_tvs]
                             mobo_error = None
                             try:
-                                candidates, predicted_Y = run_mobo(
+                                candidates, predicted_Y, ei_info = run_mobo(
                                     X_train, Y_train, st.session_state.config_vars, directions,
-                                    target_values=t_values, weights=_weights, n_candidates=3,
+                                    target_values=t_values, weights=_weights, n_candidates=n_candidates,
                                     hv_cutoff=_cutoff,
                                 )
                             except Exception as e:
-                                candidates, predicted_Y = None, None
+                                candidates, predicted_Y, ei_info = None, None, None
                                 mobo_error = str(e)
 
                         if mobo_error:
                             st.error(f"다중목표 계산 중 오류가 발생했습니다: {mobo_error}")
+                            st.session_state.pop("mobo_ai_result", None)
                         else:
-                            if st.session_state.get("prev_mobo_points") == candidates:
-                                st.info("💡 **AI 수렴 상태 판단:** 현재 데이터 풀 안에서 파레토 최적 후보가 안정적으로 수렴했습니다.")
+                            converged = st.session_state.get("prev_mobo_points") == candidates
                             st.session_state.prev_mobo_points = candidates
+                            # 세션에 저장 — 안 하면 아래 그래프 설정을 건드리는 것만으로도
+                            # 리런이 일어나 이 if 블록(버튼이 눌린 그 순간만 True)을 다시 안
+                            # 타서 방금 계산한 결과가 화면에서 사라진다.
+                            st.session_state.mobo_ai_result = {
+                                "candidates": candidates, "predicted_Y": predicted_Y,
+                                "sel_tvs": _sel_tvs, "f_names": f_names, "converged": converged,
+                                "ei_info": ei_info,
+                            }
 
-                            for i, (point, pred) in enumerate(zip(candidates, predicted_Y)):
-                                with st.container(border=True):
-                                    st.markdown(f"<h5 style='margin:0; font-weight: 800; color: #ed542b;'>실험 후보 {i+1}</h5>", unsafe_allow_html=True)
-                                    st.divider()
-                                    cols_rec = st.columns(len(f_names))
-                                    for idx, (var, val) in enumerate(zip(st.session_state.config_vars, point)):
-                                        unit_str = f" {var['Unit']}" if var.get("Unit") else ""
-                                        disp_val = f"{round(val, 3)}{unit_str}" if isinstance(val, float) else f"{val}{unit_str}"
-                                        cols_rec[idx].metric(label=var["Name"], value=disp_val)
-                                    style_metric_cards(background_color="transparent", border_left_color="#ed542b", border_color="transparent", box_shadow=False)
-                                    pred_str = " · ".join(
-                                        f"{tv['Name']} ≈ {p:.6f}{' ' + tv['Unit'] if tv.get('Unit') else ''}"
-                                        for tv, p in zip(_sel_tvs, pred)
-                                    )
-                                    st.caption(f"예측 목표값: {pred_str}")
+                # 버튼이 눌린 순간이 아니어도(=아래 그래프 설정을 건드려 리런됐어도) 세션에
+                # 저장된 결과가 있으면 계속 그린다.
+                res = st.session_state.get("mobo_ai_result")
+                if res:
+                    if res["converged"]:
+                        st.info("💡 **AI 수렴 상태 판단:** 현재 데이터 풀 안에서 파레토 최적 후보가 안정적으로 수렴했습니다.")
+
+                    ei_info = res.get("ei_info")
+                    if ei_info and ei_info["mode"] == "hv":
+                        st.caption(
+                            "📈 **기대 하이퍼볼륨 개선량**: 후보를 순서대로 하나씩 고르면서, 이미 고른 "
+                            "후보들에 이 후보를 더했을 때 파레토 프론트(트레이드오프 경계)가 얼마나 더 "
+                            "넓어질지 모델이 기대하는 크기입니다. 뒤 후보로 갈수록 앞 후보와 겹치는 "
+                            "영역이 늘어나는 경향이 있어 대체로 값이 작아지지만, 항상 그런 것은 아닙니다."
+                        )
+                    elif ei_info and ei_info["mode"] == "parego":
+                        st.caption("📈 **기대 개선량(EI)**: 후보마다 서로 다른 가중치로 목표들을 하나로 합친 뒤 "
+                                   "계산했으므로, 값 자체보다는 그 후보 카드 안의 상대적 크기(관측 스프레드 대비 %)로 "
+                                   "봐주세요.")
+
+                    for i, (point, pred) in enumerate(zip(res["candidates"], res["predicted_Y"])):
+                        with st.container(border=True):
+                            st.markdown(f"<h5 style='margin:0; font-weight: 800; color: #ed542b;'>실험 후보 {i+1}</h5>", unsafe_allow_html=True)
+                            st.divider()
+                            cols_rec = st.columns(len(res["f_names"]))
+                            for idx, (var, val) in enumerate(zip(st.session_state.config_vars, point)):
+                                unit_str = f" {var['Unit']}" if var.get("Unit") else ""
+                                disp_val = f"{round(val, 3)}{unit_str}" if isinstance(val, float) else f"{val}{unit_str}"
+                                cols_rec[idx].metric(label=var["Name"], value=disp_val)
+                            style_metric_cards(background_color="transparent", border_left_color="#ed542b", border_color="transparent", box_shadow=False)
+                            pred_str = " · ".join(
+                                f"{tv['Name']} ≈ {p:.6f}{' ' + tv['Unit'] if tv.get('Unit') else ''}"
+                                for tv, p in zip(res["sel_tvs"], pred)
+                            )
+                            st.caption(f"예측 목표값: {pred_str}")
+                            if ei_info:
+                                item = ei_info["items"][i]
+                                ratio = item["ratio"]
+                                ratio_txt = f" ({'현재 파레토 프론트 부피' if ei_info['mode'] == 'hv' else '관측 스프레드'} 대비 {ratio*100:.1f}%)" if ratio is not None else ""
+                                ei_label = "기대 하이퍼볼륨 증가량" if ei_info["mode"] == "hv" else "기대 개선량(EI, 스칼라화 기준)"
+                                st.caption(f"{ei_label}: {item['value']:.4g}{ratio_txt} — {improvement_label(ratio)}")
         # ---- 공정 변수별 목표 지표 분포 (Origin 스타일) ----
         st.divider()
         with st.container(border=True):

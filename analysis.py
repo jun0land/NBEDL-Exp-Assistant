@@ -417,10 +417,29 @@ def render_boxplots(df, config_vars, target_vars, method, alpha, *, key_prefix="
         return
 
     tnames = [tv["Name"] for tv in targets]
+
+    # 기본 선택은 등록 순서가 아니라 '이상치가 실제로 있는 목표'부터 채운다 — 안 그러면
+    # 처음 3개가 우연히 이상치 없는 목표일 때 정작 봐야 할 목표가 안 보인다.
+    grouped_for_count = list(df.groupby(cvars, dropna=False))
+
+    def _outlier_count(tn):
+        total = 0
+        for _, g in grouped_for_count:
+            yv = pd.to_numeric(g[tn], errors="coerce").to_numpy(dtype=float)
+            yv = yv[np.isfinite(yv)]
+            if len(yv):
+                total += int(outlier_mask(yv, method, alpha).sum())
+        return total
+
+    outlier_counts = {tn: _outlier_count(tn) for tn in tnames}
+    default_order = sorted(tnames, key=lambda tn: (-outlier_counts[tn], tnames.index(tn)))
+    default_sel = default_order[:min(3, len(tnames))]
+
     sel_targets = st.multiselect(
-        "표시할 목표 지표", tnames, default=tnames[:min(3, len(tnames))],
+        "표시할 목표 지표", tnames, default=default_sel,
         key=f"{key_prefix}_targets",
-        help="목표가 많으면 보고 싶은 것만 고르세요. 한 번에 너무 많이 그리면 느려집니다.")
+        help="목표가 많으면 보고 싶은 것만 고르세요. 기본값은 현재 방법으로 이상치가 "
+             "많이 잡힌 목표부터 우선 채웁니다(한 번에 너무 많이 그리면 느려집니다).")
     if not sel_targets:
         st.info("표시할 목표 지표를 하나 이상 선택하세요.")
         return
