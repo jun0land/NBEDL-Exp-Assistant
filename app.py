@@ -1246,8 +1246,12 @@ elif st.session_state.app_mode == "Dashboard":
 
             with st.container(border=True):
                 colored_header(label="🤖 베이지안 추천 차기 조건", description="가우시안 프로세스 알고리즘에 기반하여 제안된 최적 조건 후보입니다.", color_name="orange-70")
-                n_candidates = st.slider("추천 후보 개수", 1, 4, 3, key="single_n_cand",
-                                         help="불확실성이 높은(=더 알아볼 가치가 있는) 구간을 골라 후보를 추천합니다. 개수를 늘리면 다양한 지점을 동시에 실험해볼 수 있습니다.")
+                # 슬라이더는 어디를 눌러야 값이 바뀌는지 애매해서, 값마다 버튼이 하나씩
+                # 보이는 segmented_control 로 바꿨다. (선택된 걸 다시 누르면 None 이 되므로 폴백)
+                _sel = st.segmented_control(
+                    "추천 후보 개수", [1, 2, 3, 4], default=3, key="single_n_cand",
+                    help="불확실성이 높은(=더 알아볼 가치가 있는) 구간을 골라 후보를 추천합니다. 개수를 늘리면 다양한 지점을 동시에 실험해볼 수 있습니다.")
+                n_candidates = _sel if _sel else 3
                 if st.button("🚀 AI 계산 실행", type="primary", use_container_width=True):
                     if len(valid_df) < 2:
                         st.warning("정밀 분석을 위해 최소 2개 이상의 유효 데이터가 필요합니다.")
@@ -1400,8 +1404,12 @@ elif st.session_state.app_mode == "Dashboard":
                     else:
                         st.info(f"현재 선택 **{_n_sel}개** → 빠름(ParEGO) 실행 · 예상 수 초~수십 초. 탐색적 후보(정밀도는 낮음).")
 
-                n_candidates = st.slider("추천 후보 개수", 1, 4, 3, key="mobo_n_cand",
-                                         help="불확실성이 높은(=더 알아볼 가치가 있는) 구간을 골라 후보를 추천합니다. 개수를 늘리면 파레토 프론트의 더 다양한 지점을 동시에 실험해볼 수 있습니다.")
+                # 슬라이더는 어디를 눌러야 값이 바뀌는지 애매해서, 값마다 버튼이 하나씩
+                # 보이는 segmented_control 로 바꿨다. (선택된 걸 다시 누르면 None 이 되므로 폴백)
+                _sel = st.segmented_control(
+                    "추천 후보 개수", [1, 2, 3, 4], default=3, key="mobo_n_cand",
+                    help="불확실성이 높은(=더 알아볼 가치가 있는) 구간을 골라 후보를 추천합니다. 개수를 늘리면 파레토 프론트의 더 다양한 지점을 동시에 실험해볼 수 있습니다.")
+                n_candidates = _sel if _sel else 3
 
                 if not _BOTORCH_AVAILABLE:
                     st.error("다중 목표 최적화에는 `botorch` 패키지가 필요합니다. `pip install botorch`로 설치한 뒤 앱을 다시 시작하세요.")
