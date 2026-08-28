@@ -370,7 +370,8 @@ MANUAL_HTML = """
 
 <div class="nbedl-step">STEP 5. AI 추천 받기 <span class="nbedl-loc">· 🤖 AI 최적화 대시보드 탭</span></div>
 <ul>
-  <li><b>"🚀 AI 계산 실행"</b> → 다음에 시도할 <b>추천 조건 3가지</b> (최소 2개 유효 데이터 필요)</li>
+  <li><b>추천 후보 개수</b>(1~4)를 고르고 <b>"🚀 AI 계산 실행"</b> → 다음에 시도할 추천 조건 (최소 2개 유효 데이터 필요)</li>
+  <li>후보 카드 <b>맨 아래에 기대 개선량(EI)</b>이 함께 나옵니다 — "이 조건으로 실험하면 지금 최고 기록보다 얼마나 나아질지" 모델의 기대치입니다. 단위 때문에 절대값만으론 비교가 안 되므로 <b>기준 대비 %와 등급</b>(매우 낮음/낮음/보통/높음)을 같이 표시합니다. <b>등급 경계와 "언제 그만해도 되나"는 📊 분석 방법 ⑥</b> 참고.</li>
   <li><b>공정 변수별 그래프</b> — 표시 배율·정규화·추세선 조절, <b>PNG(투명)·JPG·CSV</b>로 내보내기(출판용 960×768)</li>
 </ul>
 
@@ -419,13 +420,38 @@ METHODOLOGY_HTML = """
 <h4>⑤ 다중 목표 최적화 — MOBO (qNEHVI)</h4>
 <p>목표가 2개 이상이면 상충하는 목표들의 <b>파레토 프론트</b>를 넓히는 조건을 찾습니다. 기대 개선량을 다차원으로 일반화한 <b>기대 하이퍼볼륨 개선(qNEHVI, BoTorch)</b>을 씁니다 — 목표가 1개면 EI와 같아지는 자연스러운 확장입니다.</p>
 
-<h4>⑥ 추세선 — 다항 회귀</h4>
+<h4>⑥ 기대 개선량(EI) 읽는 법 — 판단 기준</h4>
+<p>추천 후보마다 <b>기대 개선량</b>을 함께 표시합니다. "이 지점에서 실제로 실험하면 지금까지의 최고 기록보다 얼마나 더 나아질 것으로 모델이 기대하는가"입니다. 다만 <b>절대값만으로는 판단할 수 없습니다</b> — 목표 지표의 단위·스케일에 따라 같은 값도 크거나 작아 보이기 때문입니다.</p>
+<p>그래서 <b>지금까지 관측된 값들이 흩어진 폭(스프레드) 대비 몇 %</b>인지를 함께 계산해 등급을 붙입니다. 다중 목표(MOBO)에서는 스프레드 대신 <b>현재 파레토 프론트 부피</b>가 기준입니다.</p>
+<table style="width:100%; border-collapse:collapse; margin:8px 0; font-size:0.92em;">
+  <tr style="background:rgba(12,133,153,0.10);">
+    <th style="text-align:left; padding:6px 8px; border:1px solid rgba(0,0,0,0.12);">기준 대비 비율</th>
+    <th style="text-align:left; padding:6px 8px; border:1px solid rgba(0,0,0,0.12);">등급</th>
+    <th style="text-align:left; padding:6px 8px; border:1px solid rgba(0,0,0,0.12);">해석</th>
+  </tr>
+  <tr><td style="padding:6px 8px; border:1px solid rgba(0,0,0,0.12);"><b>1% 미만</b></td>
+      <td style="padding:6px 8px; border:1px solid rgba(0,0,0,0.12);">매우 낮음</td>
+      <td style="padding:6px 8px; border:1px solid rgba(0,0,0,0.12);">모델이 보기에 더 나아질 여지가 거의 없음 — <b>수렴 신호</b></td></tr>
+  <tr><td style="padding:6px 8px; border:1px solid rgba(0,0,0,0.12);"><b>1 ~ 5%</b></td>
+      <td style="padding:6px 8px; border:1px solid rgba(0,0,0,0.12);">낮음</td>
+      <td style="padding:6px 8px; border:1px solid rgba(0,0,0,0.12);">소폭 개선 정도만 기대</td></tr>
+  <tr><td style="padding:6px 8px; border:1px solid rgba(0,0,0,0.12);"><b>5 ~ 15%</b></td>
+      <td style="padding:6px 8px; border:1px solid rgba(0,0,0,0.12);">보통</td>
+      <td style="padding:6px 8px; border:1px solid rgba(0,0,0,0.12);">어느 정도 개선 가능성 있음</td></tr>
+  <tr><td style="padding:6px 8px; border:1px solid rgba(0,0,0,0.12);"><b>15% 이상</b></td>
+      <td style="padding:6px 8px; border:1px solid rgba(0,0,0,0.12);">높음</td>
+      <td style="padding:6px 8px; border:1px solid rgba(0,0,0,0.12);">상당한 개선 가능성 — 우선 시도해볼 지점</td></tr>
+</table>
+<p class="nbedl-tip">이 1% / 5% / 15% 경계는 <b>엄밀한 통계적 기준이 아니라 실무적으로 쓸 만한 경험적 구간</b>입니다. 절대 기준으로 삼기보다, <b>같은 실험 프로젝트 안에서 사이클을 거듭하며 이 값이 줄어드는 추세</b>를 보는 쪽이 훨씬 믿을 만합니다.</p>
+<p><b>언제 그만해도 되나:</b> EI가 계속 "매우 낮음"으로 나오고 <b>🔬 데이터 진단</b> 탭의 <b>목표별 수렴 곡선</b>도 평평해졌다면, 현재 탐색 범위 안에서는 더 얻을 게 적다는 신호가 겹친 것입니다. 다만 이는 "<b>모델이 보기에</b> 개선 여지가 적다"는 뜻이지 "목표 성능에 도달했다"가 아닙니다 — 실제 중단 여부는 목표 스펙 달성 여부와 남은 실험 예산을 아는 <b>사람이</b> 판단해야 합니다. 탐색 범위(공정 변수 Min~Max)를 넓히면 EI가 다시 커질 수도 있습니다.</p>
+
+<h4>⑦ 추세선 — 다항 회귀</h4>
 <p>공정 변수별 그래프의 추세선은 <b>최소제곱 다항 회귀</b>입니다(기본 1차=선형, 차수 조절 가능). 점들의 경향 요약일 뿐 인과를 뜻하지 않습니다.</p>
 
-<h4>⑦ 정규화 &amp; 종합 최적 조건</h4>
+<h4>⑧ 정규화 &amp; 종합 최적 조건</h4>
 <p>여러 목표를 한 그래프에 겹칠 때 각 목표를 <b>min–max로 0~1 정규화</b>합니다. "종합 최적 조건"은 각 목표를 방향(최대화/최소화)에 맞춰 0~1로 만든 <b>desirability</b>의 (가중)평균이 가장 높은 실험 조건 — 한쪽으로 치우치지 않은 trade-off 균형점을 고릅니다.</p>
 
-<h4>⑧ 공정 변수의 상관(다중공선성)과 조건 슬라이스</h4>
+<h4>⑨ 공정 변수의 상관(다중공선성)과 조건 슬라이스</h4>
 <p>실험에서는 공정 변수들이 서로 <b>독립이 아니라 상관</b>되기 쉽습니다(예: 온도를 올리면 반응이 빨라져 시간도 함께 조절하게 됨). 통계적으로 입력 변수끼리 상관이 크면 <b>다중공선성</b>이라 하고, "목표 vs 변수 하나" 그래프에서 다른 변수들이 같이 움직여 <b>어느 변수의 효과인지 뒤섞이는 교란(confounding)</b>이 생깁니다.</p>
 <p>실험 특성상 상관 자체는 피하기 어렵습니다. 그래서 공정 변수별 그래프의 <b>"🎛️ 다른 변수 고정 (조건 슬라이스)"</b>로 <b>나머지 변수를 좁은 범위/특정 값에 고정</b>한 채 한 변수만 훑어봅니다 — 다른 조건이 비슷한 점끼리만 비교해 그 변수의 효과를 더 또렷하게 봅니다. 각 그래프는 자기 X축 변수만 자유롭게 두고 나머지 제약을 적용합니다.</p>
 <p class="nbedl-tip">범위를 좁힐수록 교란은 줄지만 남는 점이 적어져 노이즈에 민감해집니다. 조금씩 넓혀 가며 균형을 찾으세요. (근본 해결은 실험 설계 단계에서 변수를 직교화하는 것)</p>
@@ -715,6 +741,16 @@ def improvement_label(ratio):
     if ratio < 0.15:
         return "보통 — 어느 정도 개선 가능성이 있습니다"
     return "높음 — 이 지점에서 상당한 개선 가능성이 있다고 모델이 봅니다"
+
+
+# improvement_label 의 경계와 짝을 이루는 화면용 범례 — 값만 보여주면 비교 기준이 없어
+# 판단이 안 되므로, 등급 경계를 값 바로 옆에 함께 노출한다. (자세한 설명은 '📊 분석 방법' ⑥)
+EI_GRADE_LEGEND = (
+    "판단 기준(기준 대비): **1% 미만** 매우 낮음(수렴 신호) · **1~5%** 낮음 · "
+    "**5~15%** 보통 · **15% 이상** 높음 — 경험적 구간이며, 절대 기준보다 "
+    "**사이클을 거듭하며 줄어드는 추세**를 보는 게 더 믿을 만합니다. (자세히: 오른쪽 **📊 분석 방법** ⑥)"
+)
+
 
 def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, weights=None, n_candidates=3, hv_cutoff=None):
     """다중목표 베이지안 최적화 (BoTorch).
@@ -1338,8 +1374,11 @@ elif st.session_state.app_mode == "Dashboard":
 
                     if res.get("ei_values"):
                         st.caption("📈 **기대 개선량(EI)**: 이 지점에서 실제로 실험했을 때 지금까지의 최고 기록보다 "
-                                   "얼마나 더 나아질지 모델이 기대하는 크기입니다. 값이 클수록 더 알아볼 가치가 "
-                                   "큰 지점, 0에 가까우면 모델이 보기에 개선 여지가 거의 없는 지점입니다.")
+                                   "얼마나 더 나아질지 모델이 기대하는 크기입니다. 단위·스케일 때문에 절대값만으론 "
+                                   # 볼드 닫는 '**' 앞에 '%' 같은 문장부호가 오면 마크다운이 닫는 표시로
+                                   # 인식하지 못해 '**'가 그대로 보인다 — 글자로 끝나게 쓴다.
+                                   "판단할 수 없어, **지금까지 관측값이 흩어진 폭(스프레드) 대비 비율**을 같이 표시합니다.  \n"
+                                   + EI_GRADE_LEGEND)
 
                     for i, points in enumerate(res["next_points"]):
                         with st.container(border=True):
@@ -1464,12 +1503,13 @@ elif st.session_state.app_mode == "Dashboard":
                             "📈 **기대 하이퍼볼륨 개선량**: 후보를 순서대로 하나씩 고르면서, 이미 고른 "
                             "후보들에 이 후보를 더했을 때 파레토 프론트(트레이드오프 경계)가 얼마나 더 "
                             "넓어질지 모델이 기대하는 크기입니다. 뒤 후보로 갈수록 앞 후보와 겹치는 "
-                            "영역이 늘어나는 경향이 있어 대체로 값이 작아지지만, 항상 그런 것은 아닙니다."
+                            "영역이 늘어나는 경향이 있어 대체로 값이 작아지지만, 항상 그런 것은 아닙니다. "
+                            "비교 기준은 **현재 파레토 프론트 부피**입니다.  \n" + EI_GRADE_LEGEND
                         )
                     elif ei_info and ei_info["mode"] == "parego":
                         st.caption("📈 **기대 개선량(EI)**: 후보마다 서로 다른 가중치로 목표들을 하나로 합친 뒤 "
                                    "계산했으므로, 값 자체보다는 그 후보 카드 안의 상대적 크기(관측 스프레드 대비 %)로 "
-                                   "봐주세요.")
+                                   "봐주세요.  \n" + EI_GRADE_LEGEND)
 
                     for i, (point, pred) in enumerate(zip(res["candidates"], res["predicted_Y"])):
                         with st.container(border=True):
