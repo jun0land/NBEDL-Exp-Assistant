@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import io
 import os
+import json
 import base64
 import math
 from skopt import Optimizer
@@ -928,6 +929,27 @@ def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, weig
     predicted_Y = posterior_mean_raw.tolist()
     return candidates_raw, predicted_Y, ei_info
 
+def collect_ai_target_prefs(target_vars):
+    """AI 계산 탭의 '계산에 포함할 목표 + 가중치' 현재 선택을 Excel 저장용으로 모은다.
+
+    위젯 값은 리런을 넘어 세션에 그대로 남으므로 사이드바 시점에서 키를 읽으면 된다.
+    AI 탭을 한 번도 안 열었으면 키가 없어 기본값(포함=True, 가중치=1.0)이 된다 —
+    이는 위젯의 기본값과 같으므로 저장/복원해도 동작이 달라지지 않는다.
+    """
+    sel, weights = [], {}
+    for tv in target_vars:
+        name = tv.get("Name")
+        if not name:
+            continue
+        if st.session_state.get(f"mobo_incl_{name}", True):
+            sel.append(name)
+        try:
+            weights[name] = float(st.session_state.get(f"mobo_w_{name}", 1.0))
+        except (TypeError, ValueError):
+            weights[name] = 1.0
+    return sel, weights
+
+
 @st.cache_data(show_spinner=False, max_entries=3)
 def build_excel_bytes(df, config_vars, target_vars, meta_data):
     """Excel 바이트 생성. 다운로드 버튼 때문에 매 리런마다 재생성되던 것을 캐시한다.
@@ -939,6 +961,27 @@ def build_excel_bytes(df, config_vars, target_vars, meta_data):
         pd.DataFrame(target_vars).to_excel(writer, sheet_name='Target_Vars', index=False)
         pd.DataFrame(meta_data).to_excel(writer, sheet_name='Config_Meta', index=False)
     return output.getvalue()
+
+def _clean_unit(v):
+    """Excel 의 빈 셀은 NaN(float)으로 읽힌다. NaN 은 truthy 라서 `if tv.get("Unit")`
+    검사를 통과해 버리고, 그 뒤 `" " + NaN` 에서 TypeError 가 나거나 화면에 'nan' 이
+    찍힌다. 불러오기 경계에서 한 번 정리해 이후 코드가 문자열만 보게 한다."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return ""
+    s = str(v).strip()
+    return "" if s.lower() == "nan" else s
+
+
+def _load_meta_json(df_meta, col):
+    """Config_Meta 의 JSON 문자열 셀을 파싱한다. 컬럼이 없거나(구버전 파일) 값이
+    깨져 있으면 None 을 돌려 호출부가 기본값을 쓰게 한다."""
+    if col not in df_meta.columns or df_meta.empty or pd.isna(df_meta.iloc[0][col]):
+        return None
+    try:
+        return json.loads(str(df_meta.iloc[0][col]))
+    except (ValueError, TypeError):
+        return None
+
 
 def load_excel_data(uploaded_file):
     xls = pd.ExcelFile(uploaded_file, engine='openpyxl')
@@ -955,7 +998,26 @@ def load_excel_data(uploaded_file):
         # 구버전 파일에는 Target_Value 컬럼이 없다 (Maximize/Minimize만 있던 시절).
         tv["Direction"] = target_direction(tv)
         tv["Target_Value"] = target_value_of(tv)
+        tv["Unit"] = _clean_unit(tv.get("Unit"))
     st.session_state.target_vars = target_list
+
+    # AI 계산 탭의 '계산에 포함할 목표 + 가중치' 복원.
+    # 위젯이 만들어지기 전에 세션 키를 심어두면 Streamlit이 그 값을 위젯 초기값으로 쓴다
+    # (여기는 Setup 화면이라 mobo_* 위젯이 아직 없고, 호출 직후 st.rerun 이 돈다).
+    # 저장된 목록에 없는 목표(파일 저장 이후에 새로 추가된 목표)는 손대지 않아 기본값 True 가 된다.
+    _saved_sel = _load_meta_json(df_meta, "AI_Target_Sel")
+    if isinstance(_saved_sel, list):
+        _sel_set = set(_saved_sel)
+        for tv in target_list:
+            if tv.get("Name"):
+                st.session_state[f"mobo_incl_{tv['Name']}"] = tv["Name"] in _sel_set
+    _saved_w = _load_meta_json(df_meta, "AI_Target_Weights")
+    if isinstance(_saved_w, dict):
+        for _n, _w in _saved_w.items():
+            try:
+                st.session_state[f"mobo_w_{_n}"] = float(_w)
+            except (TypeError, ValueError):
+                pass
 
     if 'Exp_Name' in df_meta.columns and pd.notna(df_meta.iloc[0]['Exp_Name']):
         st.session_state.exp_name = str(df_meta.iloc[0]['Exp_Name'])
@@ -976,6 +1038,7 @@ def load_excel_data(uploaded_file):
     for var in config_list:
         if "Old_Name" not in var or pd.isna(var["Old_Name"]):
             var["Old_Name"] = var.get("Name", "")
+        var["Unit"] = _clean_unit(var.get("Unit"))
     st.session_state.config_vars = config_list
     
     st.session_state.df_data = pd.read_excel(xls, 'Data')
@@ -1149,11 +1212,15 @@ elif st.session_state.app_mode == "Dashboard":
     
     with st.sidebar:
         st.header("📂 데이터 관리 패널")
+        # 목표 이름에 쉼표가 들어가도 깨지지 않도록 쉼표 join 대신 JSON으로 저장한다.
+        _ai_sel, _ai_w = collect_ai_target_prefs(st.session_state.target_vars)
         meta_data = {
             "Exp_Name": [display_exp_name],
             "Passive_Vars": [",".join(st.session_state.passive_vars)],
             "Outlier_Method": [st.session_state.outlier_method],
-            "Outlier_Alpha": [st.session_state.outlier_alpha]
+            "Outlier_Alpha": [st.session_state.outlier_alpha],
+            "AI_Target_Sel": [json.dumps(_ai_sel, ensure_ascii=False)],
+            "AI_Target_Weights": [json.dumps(_ai_w, ensure_ascii=False)],
         }
         excel_bytes = build_excel_bytes(st.session_state.df_data, st.session_state.config_vars, st.session_state.target_vars, meta_data)
         file_name_export = f"{display_exp_name}_Data.xlsx"
