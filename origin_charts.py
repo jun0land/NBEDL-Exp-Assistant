@@ -276,6 +276,26 @@ def origin_color_picker(label: str, target: dict, field: str, *,
     return current
 
 
+def _auto_default_text_input(label, default, key, **kwargs):
+    """기본값이 다른 설정에 따라 바뀌는 text_input.
+
+    key 가 붙은 위젯은 세션에 저장된 값이 value= 인자보다 우선이라, 기본값을 다시
+    계산해도 화면에 찍힌 값은 그대로 남는다 — 정규화를 꺼도 Y축 제목이 계속
+    "정규화 목표값"으로 보이던 원인이 이것이다.
+
+    그래서 '자동으로 넣어준 기본값'을 따로 기억해 두고, 사용자가 손대지 않았을 때
+    (= 현재 값이 그 기본값 그대로일 때)만 새 기본값으로 갈아끼운다. 직접 고쳐 쓴
+    제목은 덮어쓰지 않는다.
+    """
+    auto_key = f"{key}__auto"
+    prev_auto = st.session_state.get(auto_key)
+    if prev_auto != default:
+        if key not in st.session_state or st.session_state[key] == prev_auto:
+            st.session_state[key] = default
+        st.session_state[auto_key] = default
+    return st.text_input(label, default, key=key, **kwargs)
+
+
 def _normalize(series) -> pd.Series:
     """0~1 정규화. 상수 컬럼(max==min) 또는 데이터 없음은 0.5."""
     s = pd.to_numeric(series, errors="coerce")
@@ -542,10 +562,12 @@ def render_variable_charts(df_valid, config_vars, target_vars, key_prefix="vardi
         for vi, var in enumerate(cvars):
             vname = var["Name"]
             unit = f" ({var['Unit']})" if var.get("Unit") else ""
-            x_titles[vname] = st.text_input(f"X축 제목 — {vname}", f"{vname}{unit}", key=f"{key_prefix}_xt_{vi}")
+            # 위젯 키가 인덱스 기반이라, 변수 이름/단위를 바꾸면 같은 이유로 옛 제목이 남는다.
+            x_titles[vname] = _auto_default_text_input(
+                f"X축 제목 — {vname}", f"{vname}{unit}", f"{key_prefix}_xt_{vi}")
 
         default_y_title = "정규화 목표값 (0–1)" if normalize else "목표값 (원본 단위)"
-        y_title = st.text_input("Y축 제목 (공통)", default_y_title, key=f"{key_prefix}_ytitle")
+        y_title = _auto_default_text_input("Y축 제목 (공통)", default_y_title, f"{key_prefix}_ytitle")
         st.caption("목표별 선 색상 — 클릭해서 Origin 24색 팔레트에서 고르거나 커스텀 색 입력")
         # target[field] 패턴은 리런 사이에 유지되는 dict 참조가 필요하므로, 세션 상태에
         # {목표명: hex} dict 를 하나 두고 그 안의 값을 직접 편집한다.

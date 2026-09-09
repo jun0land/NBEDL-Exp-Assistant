@@ -1602,8 +1602,15 @@ elif st.session_state.app_mode == "Dashboard":
         # ---- 공정 변수별 목표 지표 분포 (Origin 스타일) ----
         st.divider()
         with st.container(border=True):
+            # 설명 문구도 정규화 토글을 따라가야 한다 — 껐는데 "0~1로 정규화해"라고
+            # 적혀 있으면 그래프와 어긋난다. 토글 위젯은 아래 render_variable_charts
+            # 안에 있지만, 위젯 값은 세션에 남으므로 여기서 미리 읽을 수 있다.
+            _chart_prefix = "vardist"
+            _chart_normed = st.session_state.get(f"{_chart_prefix}_norm", True)
+            _y_desc = ("0~1로 정규화해 겹쳐 보여줍니다" if _chart_normed
+                       else "원본 단위 그대로 겹쳐 보여줍니다")
             colored_header(label="📊 공정 변수별 목표 지표 분포 (Origin 스타일)",
-                           description="공정 변수 1개당 그래프 1개. X축은 공정 변수 값, Y축은 목표 지표를 0~1로 정규화해 겹쳐 보여줍니다. (학습 적용 데이터만)",
+                           description=f"공정 변수 1개당 그래프 1개. X축은 공정 변수 값, Y축은 목표 지표를 {_y_desc}. (학습 적용 데이터만)",
                            color_name="blue-70")
             valid_df_charts = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
-            render_variable_charts(valid_df_charts, st.session_state.config_vars, st.session_state.target_vars, key_prefix="vardist")
+            render_variable_charts(valid_df_charts, st.session_state.config_vars, st.session_state.target_vars, key_prefix=_chart_prefix)
