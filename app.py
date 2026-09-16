@@ -420,6 +420,7 @@ METHODOLOGY_HTML = """
 
 <h4>⑤ 다중 목표 최적화 — MOBO (qNEHVI)</h4>
 <p>목표가 2개 이상이면 상충하는 목표들의 <b>파레토 프론트</b>를 넓히는 조건을 찾습니다. 기대 개선량을 다차원으로 일반화한 <b>기대 하이퍼볼륨 개선(qNEHVI, BoTorch)</b>을 씁니다 — 목표가 1개면 EI와 같아지는 자연스러운 확장입니다.</p>
+<p><b>최소 허용값(기준점)</b> — 하이퍼볼륨은 <b>기준점</b>이라는 모서리에서부터 잰 부피입니다. 기본값은 지금까지의 <b>관측 최솟값</b>에서 자동으로 잡히는데, 그러면 모든 관측이 부피를 만듭니다. 문제는 <b>최소화 목표</b>입니다 — "누설을 줄여라"의 자명한 해는 <b>소자가 죽는 것</b>이라, 응답이 거의 없는 데이터가 최소화 축에서 1등이 되어 파레토 프론트를 차지합니다. AI 계산 탭의 <b>"최소 허용값"</b>에 <i>이 정도는 나와야 소자로 인정한다</i>는 값을 넣으면 그 지점이 기준점이 되어, 그보다 나쁜 데이터는 <b>부피 기여가 0</b>이 됩니다. 데이터를 지우는 게 아니라 <b>평가에서만 빠지는</b> 방식이라 GP 학습에는 그대로 쓰입니다.</p>
 
 <h4>⑥ 기대 개선량(EI) 읽는 법 — 판단 기준</h4>
 <p>추천 후보마다 <b>기대 개선량</b>을 함께 표시합니다. "이 지점에서 실제로 실험하면 지금까지의 최고 기록보다 얼마나 더 나아질 것으로 모델이 기대하는가"입니다. 다만 <b>절대값만으로는 판단할 수 없습니다</b> — 목표 지표의 단위·스케일에 따라 같은 값도 크거나 작아 보이기 때문입니다.</p>
@@ -753,7 +754,7 @@ EI_GRADE_LEGEND = (
 )
 
 
-def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, weights=None, n_candidates=3, hv_cutoff=None):
+def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, weights=None, n_candidates=3, hv_cutoff=None, floor_values=None):
     """다중목표 베이지안 최적화 (BoTorch).
 
     단일목표 EI는 "현재 최고값 대비 개선 기댓값"을 계산하는데, 이를 다차원으로 일반화한 것이
@@ -775,6 +776,12 @@ def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, weig
 
     directions:    target_cols와 같은 순서의 "Maximize"/"Minimize"/"Target" 리스트.
     target_values: 같은 순서의 목표값 리스트 (Target 방향에서만 의미가 있다).
+    floor_values:  같은 순서의 "최소 허용값" 리스트(원본 단위, 항목별 None 가능). 값이 있으면
+                   하이퍼볼륨 기준점(ref_point)으로 쓰인다 — 기준점보다 나쁜 관측은 부피에
+                   전혀 기여하지 않으므로, 소자가 죽어서 최소화 목표에서만 좋아 보이는
+                   데이터가 파레토 프론트를 차지하는 것을 막는다. 기준점은 원래 "이보다
+                   나쁘면 의미 없다"를 넣는 자리인데, 지정하지 않으면 종전대로 관측
+                   최솟값에서 자동으로 잡아 모든 관측이 부피를 만든다.
 
     GP는 목표의 '원본 값'을 그대로 학습하고, 방향 변환(최대화 기준으로 통일)은 획득함수의
     objective 단계에서만 적용한다 — 이렇게 해야 Target 모드에서 |y-목표값| 의 꺾인 형태를
@@ -866,6 +873,22 @@ def run_mobo(X_train, Y_train, config_vars, directions, target_values=None, weig
         Y_objw = Y_obj * w
         y_range = (Y_objw.max(dim=0).values - Y_objw.min(dim=0).values).clamp(min=1e-6)
         ref_point = Y_objw.min(dim=0).values - 0.1 * y_range
+        # 사용자가 목표별 "최소 허용값"을 준 축은 그 지점을 기준점으로 바꾼다. 방향 변환
+        # (Maximize +y / Minimize -y / Target -|y-t|)과 가중치를 똑같이 태워야 관측값과
+        # 같은 좌표계에 놓인다. 값을 안 준 축은 위의 자동 기준점을 그대로 쓴다.
+        if floor_values is not None:
+            fv = torch.tensor([float("nan") if v is None else float(v) for v in floor_values], dtype=torch.double)
+            has_floor = ~torch.isnan(fv)
+            if bool(has_floor.any()):
+                ref_user = (obj_transform(torch.nan_to_num(fv, nan=0.0).unsqueeze(0)) * w).squeeze(0)
+                ref_point = torch.where(has_floor, ref_user, ref_point)
+                # 기준점을 모든 축에서 동시에 넘는 관측이 하나도 없으면 하이퍼볼륨이 0이라
+                # 획득함수가 아무 신호도 내지 못한다. 조용히 실패하지 말고 사유를 알린다.
+                if int((Y_objw > ref_point).all(dim=-1).sum()) == 0:
+                    raise ValueError(
+                        "설정한 '최소 허용값'을 모든 목표에서 동시에 넘는 데이터가 하나도 없습니다. "
+                        "값을 낮추거나 일부를 비워 두세요."
+                    )
         acq = qLogNoisyExpectedHypervolumeImprovement(
             model=model, ref_point=ref_point.tolist(), X_baseline=X_norm,
             sampler=sampler, prune_baseline=True,
@@ -936,7 +959,7 @@ def collect_ai_target_prefs(target_vars):
     AI 탭을 한 번도 안 열었으면 키가 없어 기본값(포함=True, 가중치=1.0)이 된다 —
     이는 위젯의 기본값과 같으므로 저장/복원해도 동작이 달라지지 않는다.
     """
-    sel, weights = [], {}
+    sel, weights, floors = [], {}, {}
     for tv in target_vars:
         name = tv.get("Name")
         if not name:
@@ -947,7 +970,13 @@ def collect_ai_target_prefs(target_vars):
             weights[name] = float(st.session_state.get(f"mobo_w_{name}", 1.0))
         except (TypeError, ValueError):
             weights[name] = 1.0
-    return sel, weights
+        _f = str(st.session_state.get(f"mobo_floor_{name}", "") or "").strip()
+        if _f:
+            try:
+                floors[name] = float(_f)
+            except ValueError:
+                pass
+    return sel, weights, floors
 
 
 @st.cache_data(show_spinner=False, max_entries=3)
@@ -1018,6 +1047,14 @@ def load_excel_data(uploaded_file):
                 st.session_state[f"mobo_w_{_n}"] = float(_w)
             except (TypeError, ValueError):
                 pass
+    # 최소 허용값(하이퍼볼륨 기준점). 구버전 파일에는 컬럼이 없어 None 이 오고, 그때는
+    # 위젯이 빈 칸으로 시작해 종전(자동 기준점) 동작이 된다.
+    _saved_floor = _load_meta_json(df_meta, "AI_Target_Floors")
+    if isinstance(_saved_floor, dict):
+        for _n, _fv in _saved_floor.items():
+            if _fv is None:
+                continue
+            st.session_state[f"mobo_floor_{_n}"] = str(_fv)
 
     if 'Exp_Name' in df_meta.columns and pd.notna(df_meta.iloc[0]['Exp_Name']):
         st.session_state.exp_name = str(df_meta.iloc[0]['Exp_Name'])
@@ -1213,7 +1250,7 @@ elif st.session_state.app_mode == "Dashboard":
     with st.sidebar:
         st.header("📂 데이터 관리 패널")
         # 목표 이름에 쉼표가 들어가도 깨지지 않도록 쉼표 join 대신 JSON으로 저장한다.
-        _ai_sel, _ai_w = collect_ai_target_prefs(st.session_state.target_vars)
+        _ai_sel, _ai_w, _ai_floor = collect_ai_target_prefs(st.session_state.target_vars)
         meta_data = {
             "Exp_Name": [display_exp_name],
             "Passive_Vars": [",".join(st.session_state.passive_vars)],
@@ -1221,6 +1258,7 @@ elif st.session_state.app_mode == "Dashboard":
             "Outlier_Alpha": [st.session_state.outlier_alpha],
             "AI_Target_Sel": [json.dumps(_ai_sel, ensure_ascii=False)],
             "AI_Target_Weights": [json.dumps(_ai_w, ensure_ascii=False)],
+            "AI_Target_Floors": [json.dumps(_ai_floor, ensure_ascii=False)],
         }
         excel_bytes = build_excel_bytes(st.session_state.df_data, st.session_state.config_vars, st.session_state.target_vars, meta_data)
         file_name_export = f"{display_exp_name}_Data.xlsx"
@@ -1486,6 +1524,32 @@ elif st.session_state.app_mode == "Dashboard":
                 st.caption("계산에 포함할 목표와 가중치 (체크 해제 시 제외 · 기본 가중치 1 · 2개 이상 선택)")
                 _mobo_sel, _mobo_w = render_target_selectors(st.session_state.target_vars, "mobo")
 
+                # 목표별 "최소 허용값" = 하이퍼볼륨 기준점(ref_point). 비워 두면 종전대로
+                # 관측 최솟값에서 자동으로 잡혀 모든 관측이 부피를 만든다 — 그러면 소자가
+                # 죽어서 최소화 목표(누설 등)에서만 좋아 보이는 데이터가 파레토 프론트를
+                # 차지한다. 값을 넣으면 그보다 나쁜 관측은 부피 기여가 0이 되어, 데이터를
+                # 지우지 않고 평가에서만 빠진다.
+                with st.expander("🚧 최소 허용값 (선택) — 이보다 나쁜 데이터는 파레토 계산에서 빠집니다"):
+                    st.caption(
+                        "**비워 두면 자동**(지금까지의 관측 최솟값 기준 · 종전 동작)입니다.  \n"
+                        "**최대화(↑) 목표**에는 *이 정도는 나와야 소자로 인정한다*는 **최소 응답도**를, "
+                        "**최소화(↓) 목표**에는 *이 이상이면 곤란하다*는 **최대 허용값**을 넣으세요.  \n"
+                        "데이터를 지우는 게 아니라 **파레토 평가에서만 제외**합니다 — GP 학습에는 그대로 쓰입니다.  \n"
+                        "※ 계산 방식이 **빠름(ParEGO)** 으로 넘어가면 기준점 개념이 없어 이 값은 무시됩니다."
+                    )
+                    _fl_cols = st.columns(2)
+                    _fl_i = 0
+                    for _tv in st.session_state.target_vars:
+                        if _tv["Name"] not in _mobo_sel:
+                            continue
+                        _unit = _tv.get("Unit") or ""
+                        _fl_cols[_fl_i % 2].text_input(
+                            f"{_tv['Name']} ({direction_label(_tv)})" + (f" [{_unit}]" if _unit else ""),
+                            key=f"mobo_floor_{_tv['Name']}",
+                            placeholder="비워두면 자동",
+                        )
+                        _fl_i += 1
+
                 # 계산 방식: 정확도(qLogNEHVI) ↔ 속도(ParEGO) 트레이드오프. 기준은 '목표 개수'.
                 st.markdown("**계산 방식** — 정확도와 속도 중 어디에 비중을 둘지")
                 _mode = st.radio(
@@ -1531,12 +1595,26 @@ elif st.session_state.app_mode == "Dashboard":
                             directions = [target_direction(tv) for tv in _sel_tvs]
                             t_values = [target_value_of(tv) for tv in _sel_tvs]
                             _weights = [_mobo_w[tv["Name"]] for tv in _sel_tvs]
+                            # 최소 허용값: 빈 칸이면 None(자동), 숫자가 아니면 무시하고 알린다.
+                            _floors, _bad_floor = [], []
+                            for tv in _sel_tvs:
+                                _raw = str(st.session_state.get(f"mobo_floor_{tv['Name']}", "") or "").strip()
+                                if not _raw:
+                                    _floors.append(None)
+                                    continue
+                                try:
+                                    _floors.append(float(_raw))
+                                except ValueError:
+                                    _floors.append(None)
+                                    _bad_floor.append(tv["Name"])
+                            if _bad_floor:
+                                st.warning("최소 허용값을 숫자로 읽을 수 없어 자동 기준점을 씁니다: " + ", ".join(_bad_floor))
                             mobo_error = None
                             try:
                                 candidates, predicted_Y, ei_info = run_mobo(
                                     X_train, Y_train, st.session_state.config_vars, directions,
                                     target_values=t_values, weights=_weights, n_candidates=n_candidates,
-                                    hv_cutoff=_cutoff,
+                                    hv_cutoff=_cutoff, floor_values=_floors,
                                 )
                             except Exception as e:
                                 candidates, predicted_Y, ei_info = None, None, None
