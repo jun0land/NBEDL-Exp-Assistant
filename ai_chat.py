@@ -403,30 +403,43 @@ def build_context(config_vars, target_vars, max_rows=40):
 # 화면
 # ---------------------------------------------------------------------------
 
-def _render_key_panel():
-    """키 잠금 해제 / 저장 / 삭제. 평문 키는 화면에도 위젯 상태에도 남기지 않는다."""
-    local = running_locally()
+def _render_key_panel(compact=False, inner=False):
+    """키 상태와 등록 폼.
+
+    compact=True 는 '키가 이미 풀려 있으니 자리를 차지하지 말라'는 뜻이라 아무것도 그리지
+    않는다. 잠그기·삭제는 설정 안(inner=True)에서만 보여 준다. 대화하러 연 창에서 키
+    관리 상자가 늘 펼쳐져 있으면, 정작 쓸 일 없는 것이 화면의 절반을 먹는다.
+    """
     have = bool(st.session_state.get(SESSION_KEY))
-    with st.expander("🔑 Gemini API 키" + (" — 잠금 해제됨" if have else ""), expanded=not have):
-        if have:
-            st.success(f"이 세션에서 사용 중 · 키 {secret_store.mask(st.session_state[SESSION_KEY])}")
-            cols = st.columns(2 if local and secret_store.store_exists() else 1)
-            if cols[0].button("🔒 세션에서 내리기", use_container_width=True):
-                st.session_state.pop(SESSION_KEY, None)
-                st.rerun()
-            if local and secret_store.store_exists():
-                if cols[1].button("🗑️ 이 컴퓨터에 저장된 키 삭제", use_container_width=True):
-                    secret_store.forget_secret(SECRET_NAME)
-                    st.session_state.pop(SESSION_KEY, None)
-                    st.rerun()
-            return
+    local = running_locally()
+    if have and compact:
+        return
+    if have and inner:
+        st.caption(f"🔑 키 {secret_store.mask(st.session_state[SESSION_KEY])} 사용 중")
+        cols = st.columns(2 if (local and secret_store.store_exists()) else 1)
+        cols[0].button("세션에서 내리기", key="nbedl_key_lock",
+                       on_click=_lock_key, use_container_width=True)
+        if local and secret_store.store_exists():
+            cols[1].button("이 컴퓨터에서 삭제", key="nbedl_key_forget",
+                           on_click=_forget_key, use_container_width=True)
+        return
+    if have:
+        return
 
-        _password_manager_hints()
+    _password_manager_hints()
+    if local:
+        _render_local_key_form()
+    else:
+        _render_shared_key_form()
 
-        if local:
-            _render_local_key_form()
-        else:
-            _render_shared_key_form()
+
+def _lock_key():
+    st.session_state.pop(SESSION_KEY, None)
+
+
+def _forget_key():
+    secret_store.forget_secret(SECRET_NAME)
+    st.session_state.pop(SESSION_KEY, None)
 
 
 def _render_shared_key_form():
@@ -507,13 +520,14 @@ def _render_local_key_form():
 
 
 def render_chat(config_vars, target_vars):
-    _render_key_panel()
+    """떠 있는 창의 속. 대화를 시작하기 전에도 화면 절반을 잡아먹지 않도록, 평소에는
+    한 줄짜리 설정과 입력창만 보이고 나머지는 '설정' 안으로 접어 둔다."""
+    locked = not st.session_state.get(SESSION_KEY)
+    _render_key_panel(compact=not locked)
     api_key = st.session_state.get(SESSION_KEY)
     if not api_key:
-        st.info("키를 등록하면 지금 화면의 데이터를 놓고 대화할 수 있습니다.")
         return
 
-    # 모델 목록은 API 에 물어서 채우되, 대화에 쓸 만한 것만 추린다.
     if "gemini_model_list" not in st.session_state:
         try:
             st.session_state.gemini_model_list = curate_models(list_models(api_key))
@@ -528,70 +542,67 @@ def render_chat(config_vars, target_vars):
     if names:
         if MODEL_KEY not in st.session_state or st.session_state[MODEL_KEY] not in names:
             st.session_state[MODEL_KEY] = default_model(models)
-        c1.selectbox("모델", names, key=MODEL_KEY,
+        c1.selectbox("모델", names, key=MODEL_KEY, label_visibility="collapsed",
                      format_func=lambda n: f"{n} — {notes[n]}" if notes.get(n) else n,
                      help="왼쪽일수록 빠르고 싸며, 오른쪽일수록 똑똑하고 느립니다. "
                           "간단한 확인은 Lite, 평소에는 Flash, 답이 얕게 느껴지면 Pro 로 바꿔 보세요. "
                           "그림을 읽는 것은 세 등급 모두 됩니다.")
     else:
-        c1.text_input("모델 이름", key=MODEL_KEY, placeholder=f"예: {DEFAULT_MODEL}")
-    if c2.button("대화 비우기", key="nbedl_chat_clear", use_container_width=True):
-        st.session_state[HISTORY_KEY] = []
-        st.session_state.pop(IMAGE_KEY, None)
-        st.rerun()
+        c1.text_input("모델", key=MODEL_KEY, label_visibility="collapsed",
+                      placeholder=f"예: {DEFAULT_MODEL}")
+    c2.button("대화 비우기", key="nbedl_chat_clear", on_click=_clear_chat,
+              use_container_width=True)
 
     context_md = build_context(config_vars, target_vars)
-
-    with st.expander("📎 그림 첨부 — 그래프·현미경 사진·화면 캡처"):
+    with st.expander("⚙️ 전송 데이터 · 키 · 도움말"):
         st.caption(
-            "도우미는 **이 앱의 화면을 직접 보지는 못합니다.** 표로 정리된 숫자만 전달받습니다.  \n"
-            "그래프의 모양이나 사진에 대해 물으시려면 그 그림을 여기에 넣어 주세요. "
-            "Gemini 는 그림을 읽을 수 있어서, 표와 그림을 함께 놓고 답합니다.  \n"
-            "그래프는 **📊 공정 변수별 분포**에서 PNG 로 내보낸 뒤 올리시면 됩니다."
+            "**도우미는 이 앱의 화면을 직접 보지 못합니다.** 아래 표로 정리된 숫자만 전달받습니다. "
+            "그래프의 모양이나 사진에 대해 물으시려면 입력창의 **📎** 로 그림을 넣어 주세요.  \n"
+            "💡 예시: 「조건별로 두 모드가 함께 성립하는지 비교해 줘」 · "
+            "「평균과 중앙값이 크게 다른 조건이 어디야」 · 「다음 배치를 어떻게 설계하면 좋을까」"
         )
-        ups = st.file_uploader("그림 파일", type=["png", "jpg", "jpeg", "webp"],
-                               accept_multiple_files=True, key="nbedl_chat_upload",
-                               label_visibility="collapsed")
-    imgs = []
-    if ups:
-        for f in ups[:4]:                       # 너무 많이 붙이면 요청이 무거워진다
-            raw = f.getvalue()
-            if len(raw) > 6 * 1024 * 1024:
-                st.warning(f"{f.name} 은 6 MB 를 넘어 건너뜁니다.")
-                continue
-            imgs.append((f.type or "image/png", base64.b64encode(raw).decode()))
-        if imgs:
-            st.caption(f"🖼 그림 {len(imgs)}장이 다음 질문과 함께 전달됩니다.")
-
-    with st.expander("📋 모델에게 함께 보내는 데이터 (직접 확인)"):
-        st.caption("이 내용만 전송됩니다. 원자료 전체가 아니라 조건별로 집계된 표입니다.")
         st.code(context_md, language="markdown")
-
-    st.caption(
-        "💡 예시 질문: 「조건별로 두 모드가 함께 성립하는지 비교해 줘」 · "
-        "「평균과 중앙값이 크게 다른 조건이 어디야」 · 「다음 배치를 어떻게 설계하면 좋을까」"
-    )
+        _render_key_panel(compact=False, inner=True)
 
     history = st.session_state.setdefault(HISTORY_KEY, [])
     for h in history:
         with st.chat_message(h["role"]):
             st.markdown(h["content"])
 
-    # st.chat_input 은 버전에 따라 컨테이너 안에서 거부될 수 있다. 그럴 때는 일반
-    # 입력창으로 조용히 내려앉아, 스트림릿 버전 때문에 탭 전체가 죽지 않게 한다.
+    # 그림 첨부는 입력창 안의 클립으로. 따로 칸을 두면 대화도 시작하기 전에 자리를 먹는다.
+    prompt, files = None, []
     try:
-        prompt = st.chat_input("데이터에 대해 물어보세요")
+        val = st.chat_input("데이터에 대해 물어보세요", accept_file="multiple",
+                            file_type=["png", "jpg", "jpeg", "webp"])
+        if val is not None:
+            prompt = getattr(val, "text", None) if hasattr(val, "text") else str(val)
+            files = list(getattr(val, "files", []) or [])
+    except TypeError:
+        # accept_file 을 모르는 옛 버전
+        val = st.chat_input("데이터에 대해 물어보세요")
+        prompt = val
     except Exception:
         with st.form("gemini_ask", border=False, clear_on_submit=True):
             prompt = st.text_input("질문", label_visibility="collapsed",
                                    placeholder="데이터에 대해 물어보세요")
             if not st.form_submit_button("보내기", type="primary"):
                 prompt = None
-    if not prompt:
+    if not prompt and not files:
         return
-    history.append({"role": "user", "content": prompt})
+    prompt = (prompt or "").strip() or "첨부한 그림을 보고 설명해 줘."
+
+    imgs = []
+    for f in files[:4]:
+        raw = f.getvalue()
+        if len(raw) > 6 * 1024 * 1024:
+            st.warning(f"{f.name} 은 6 MB 를 넘어 건너뜁니다.")
+            continue
+        imgs.append((f.type or "image/png", base64.b64encode(raw).decode()))
+
+    shown = prompt + (f"\n\n*🖼 그림 {len(imgs)}장 첨부*" if imgs else "")
+    history.append({"role": "user", "content": shown})
     with st.chat_message("user"):
-        st.markdown(prompt)
+        st.markdown(shown)
     chosen = st.session_state.get(MODEL_KEY) or DEFAULT_MODEL
     alts = fallback_order(chosen, models) or [m for m in MODEL_PREFERENCE if m != chosen][:1]
     with st.chat_message("assistant"):
@@ -607,6 +618,10 @@ def render_chat(config_vars, target_vars):
                 answer = "요청에 실패했습니다: " + secret_store.scrub(str(e)[:400], api_key)
         st.markdown(answer)
     history.append({"role": "assistant", "content": answer})
+
+
+def _clear_chat():
+    st.session_state[HISTORY_KEY] = []
 
 
 # ---------------------------------------------------------------------------
@@ -629,33 +644,38 @@ _CHAT_CSS = """
 <script>
 (function() {
   try {
-    var doc = window.parent.document, ID = 'nbedl-chat-style';
+    var doc = window.parent.document, win = window.parent, ID = 'nbedl-chat-style';
     var st = doc.getElementById(ID);
     if (!st) { st = doc.createElement('style'); st.id = ID; doc.head.appendChild(st); }
     st.textContent = [
-      /* 떠 있는 창 자체 */
-      '.nbedl-chat-panel{position:fixed !important;left:20px;bottom:20px;z-index:9990;',
-      '  width:auto !important;}',
-      '.nbedl-chat-panel[data-open="1"]{width:min(470px,calc(100vw - 40px)) !important;',
+      /* 떠 있는 창. 왼쪽 위치는 사이드바 폭에 따라 자바스크립트가 정해 준다. */
+      '.nbedl-chat-panel{position:fixed !important;bottom:20px;z-index:9990;',
+      '  left:var(--nbedl-chat-left,20px);width:auto !important;',
+      '  transition:left .2s ease;}',
+      '.nbedl-chat-panel[data-open="1"]{',
+      '  width:min(470px,calc(100vw - var(--nbedl-chat-left,20px) - 20px)) !important;',
       '  max-height:min(78vh,780px);overflow-y:auto;overflow-x:hidden;',
       '  background:var(--background-color,#ffffff);',
       '  border:1px solid rgba(49,51,63,.18);border-radius:18px;',
       '  box-shadow:0 14px 48px rgba(0,0,0,.22);padding:14px 16px 10px;}',
 
-      /* 닫혀 있을 때 = 알약 모양 단추. 이모지 대신 직접 그린 마스코트를 왼쪽에 얹는다. */
-      '.nbedl-chat-panel[data-open="0"] .stButton>button{',
-      '  height:62px;padding:0 26px 0 68px;border-radius:31px;border:none !important;',
+      /* 닫혀 있을 때 = 알약 모양 단추. 이모지 대신 직접 그린 마스코트를 왼쪽에 얹는다.
+         help 툴팁이 단추를 span 으로 한 겹 더 감싸므로 자식(>)이 아니라 자손으로 짚는다. */
+      '.nbedl-chat-panel[data-open="0"] [data-testid="stButton"] button{',
+      '  height:62px !important;padding:0 26px 0 68px !important;',
+      '  border-radius:31px !important;border:none !important;',
       '  background-image:url("%MASCOT%"),linear-gradient(135deg,#ed542b,#f68b21) !important;',
-      '  background-repeat:no-repeat,no-repeat;',
-      '  background-position:18px center,center;',
-      '  background-size:38px 38px,100% 100%;',
+      '  background-repeat:no-repeat,no-repeat !important;',
+      '  background-position:18px center,center !important;',
+      '  background-size:38px 38px,100% 100% !important;',
       '  color:#fff !important;font-size:1.02rem;font-weight:800;letter-spacing:.01em;',
       '  white-space:nowrap;transition:transform .16s ease, box-shadow .16s ease;',
       '  animation:nbedlChatPulse 2.6s ease-out 4;}',
-      '.nbedl-chat-panel[data-open="0"] .stButton>button:hover{',
+      '.nbedl-chat-panel[data-open="0"] [data-testid="stButton"] button:hover{',
       '  transform:translateY(-2px) scale(1.03);animation:none;',
       '  box-shadow:0 12px 34px rgba(237,84,43,.5) !important;}',
-      '.nbedl-chat-panel[data-open="0"] .stButton>button p{',
+      '.nbedl-chat-panel[data-open="0"] [data-testid="stButton"] button p,',
+      '.nbedl-chat-panel[data-open="0"] [data-testid="stButton"] button div{',
       '  font-size:1.02rem !important;font-weight:800 !important;color:#fff !important;}',
       /* 처음 몇 번만 파문이 퍼진다. 계속 움직이면 곧 거슬린다. */
       '@keyframes nbedlChatPulse{',
@@ -663,13 +683,56 @@ _CHAT_CSS = """
       '  70%{box-shadow:0 8px 26px rgba(0,0,0,.26),0 0 0 18px rgba(237,84,43,0);}',
       '  100%{box-shadow:0 8px 26px rgba(0,0,0,.26),0 0 0 0 rgba(237,84,43,0);}}',
 
-      /* 창 안은 여백을 죄어 좁은 폭에서도 읽히게 */
-      '.nbedl-chat-panel[data-open="1"] [data-testid="stVerticalBlock"]{gap:.45rem;}',
-      '.nbedl-chat-panel .stChatMessage{padding:.4rem .6rem;}',
+      /* 창 안은 여백을 죄어 좁은 폭에서도 읽히게.
+         창 자체가 곧 stVerticalBlock 이므로 자손 선택자로는 창의 gap 을 못 줄인다.
+         창을 직접 짚는 규칙을 따로 둔다. 확장 상자는 흰 카드를 만드는 안쪽 여백(24 px)이
+         겹겹이 쌓여 대화도 시작하기 전에 화면 절반을 먹으므로 없앤다. */
+      '.nbedl-chat-panel[data-open="1"]{gap:.35rem !important;}',
+      '.nbedl-chat-panel[data-open="1"] [data-testid="stVerticalBlock"]{gap:.3rem !important;}',
+      '.nbedl-chat-panel[data-open="1"] [data-testid="stExpander"]{padding:0 !important;}',
+      '.nbedl-chat-panel[data-open="1"] [data-testid="stExpander"] summary{',
+      '  padding-top:.3rem !important;padding-bottom:.3rem !important;}',
+      '.nbedl-chat-panel[data-open="1"] [data-testid="stExpander"] summary p{',
+      '  font-size:.84rem !important;}',
+      '.nbedl-chat-panel .stChatMessage{padding:.35rem .55rem;}',
       '.nbedl-chat-panel p,.nbedl-chat-panel li{font-size:.88rem;}',
+      /* 창 안의 보통 단추는 좁은 칸에서도 글자가 잘리지 않게 */
+      '.nbedl-chat-panel[data-open="1"] [data-testid="stButton"] button{',
+      '  padding-left:.3rem;padding-right:.3rem;white-space:nowrap;}',
+
+      /* 머리글은 한 덩어리 flex, 닫기 단추는 창 오른쪽 위에 절대 위치로 고정한다.
+         칸으로 나누면 칸 높이가 제각각이라 세로 정렬이 늘 몇 픽셀씩 어긋난다. */
+      '.nbedl-chat-head{display:flex;align-items:center;gap:9px;padding-right:44px;',
+'  min-height:46px;margin-bottom:10px;}',
+      '.nbedl-chat-head .t{font-weight:800;font-size:1.02rem;line-height:1.2;}',
+      '.nbedl-chat-head .s{font-size:.72rem;opacity:.6;line-height:1.25;}',
+      '.nbedl-chat-panel[data-open="1"]{position:fixed !important;}',
+      /* 창 안쪽 여백 14 + 머리글 높이의 절반 23 - 단추 높이의 절반 17 = 20 */
+      '.st-key-nbedl_chat_close{position:absolute !important;top:20px;right:14px;',
+      '  width:auto !important;z-index:3;}',
+      '.st-key-nbedl_chat_close button{width:34px !important;height:34px !important;',
+      '  min-width:34px !important;min-height:34px !important;padding:0 !important;',
+      '  border-radius:9px !important;font-size:.9rem !important;line-height:1 !important;}',
+      '.st-key-nbedl_chat_header [data-testid="stButton"] button{',
+      '  width:36px !important;height:36px !important;min-width:36px !important;',
+      '  padding:0 !important;border-radius:9px !important;',
+      '  font-size:.95rem !important;line-height:1 !important;}',
       /* 단추가 본문 마지막 줄을 가리지 않도록 아래 여백 */
       '[data-testid="stMain"] .block-container{padding-bottom:120px;}'
     ].join('');
+
+    // 사이드바는 z-index 가 이 창보다 훨씬 높아서, 왼쪽 끝에 두면 그 아래로 숨는다.
+    // 그래서 사이드바의 오른쪽 끝을 재어 그만큼 비켜 놓는다. 접으면 화면 밖으로
+    // 밀려나므로 0 이 되어 원래 자리로 돌아온다.
+    var place = function() {
+      var sb = doc.querySelector('[data-testid="stSidebar"]');
+      var w = 0;
+      if (sb) {
+        var r = sb.getBoundingClientRect();
+        if (r.width > 0) w = Math.max(0, Math.round(r.right));
+      }
+      doc.documentElement.style.setProperty('--nbedl-chat-left', (w + 20) + 'px');
+    };
 
     var mark = function() {
       var a = doc.getElementById('%ANCHOR%');
@@ -681,11 +744,17 @@ _CHAT_CSS = """
       });
       block.classList.add('nbedl-chat-panel');
       block.setAttribute('data-open', a.dataset.open || '0');
+      place();
     };
     mark();
-    if (!window.parent.__nbedlChatObs) {
-      window.parent.__nbedlChatObs = new window.parent.MutationObserver(mark);
-      window.parent.__nbedlChatObs.observe(doc.body, {childList: true, subtree: true});
+    if (!win.__nbedlChatObs) {
+      win.__nbedlChatObs = new win.MutationObserver(mark);
+      win.__nbedlChatObs.observe(doc.body, {childList: true, subtree: true});
+      win.addEventListener('resize', place);
+      // 사이드바를 접고 펴는 동안에도 따라가도록 몇 번 더 재 본다(애니메이션 때문).
+      doc.addEventListener('click', function() {
+        [0, 120, 260, 420].forEach(function(t) { win.setTimeout(place, t); });
+      }, true);
     }
   } catch (err) { /* 무시 */ }
 })();
@@ -693,8 +762,16 @@ _CHAT_CSS = """
 """
 
 
+def _toggle_chat():
+    st.session_state[OPEN_KEY] = not st.session_state.get(OPEN_KEY, False)
+
+
 def render_floating_chat(config_vars, target_vars):
-    """화면 왼쪽 아래에 떠 있는 분석 도우미. 탭 밖에서 한 번만 호출한다."""
+    """화면 왼쪽 아래에 떠 있는 분석 도우미. 탭 밖에서 한 번만 호출한다.
+
+    여닫기는 on_click 콜백으로 처리한다. 버튼 안에서 상태를 바꾸고 st.rerun() 을 부르면
+    위젯이 부른 리런과 합쳐 두 번 돌지만, 콜백은 리런 전에 실행되므로 한 번으로 끝난다.
+    """
     is_open = bool(st.session_state.get(OPEN_KEY, False))
     box = st.container()
     with box:
@@ -703,23 +780,21 @@ def render_floating_chat(config_vars, target_vars):
             f'style="height:0;overflow:hidden;"></div>',
             unsafe_allow_html=True)
         if is_open:
-            head, shut = st.columns([5, 1], vertical_alignment="center")
-            head.markdown(
-                "<div style='display:flex;align-items:center;gap:9px;'>"
+            # 머리글은 한 덩어리 HTML 로 그리고, 닫기 단추는 창 오른쪽 위에 절대 위치로
+            # 붙인다. 두 칸(columns)으로 나누면 칸 높이가 제각각이라 세로 정렬이 어긋난다.
+            # key 를 주면 Streamlit 이 st-key-<key> 클래스를 붙여 주므로 그것으로 짚는다.
+            st.markdown(
+                "<div class='nbedl-chat-head'>"
                 f"<img src='{MASCOT_ORANGE}' width='30' height='30' alt=''>"
-                "<div><div style='font-weight:800;font-size:1.02rem;line-height:1.2;'>분석 도우미</div>"
-                "<div style='font-size:.73rem;opacity:.6;line-height:1.25;'>"
-                "숫자는 앱이 계산해 표로 건네고, 모델은 해석만 합니다.</div></div></div>",
+                "<div><div class='t'>분석 도우미</div>"
+                "<div class='s'>숫자는 앱이 계산해 표로 건네고, 모델은 해석만 합니다.</div>"
+                "</div></div>",
                 unsafe_allow_html=True)
-            if shut.button("✕", key="nbedl_chat_close", help="닫기"):
-                st.session_state[OPEN_KEY] = False
-                st.rerun()
-            st.divider()
+            with st.container(key="nbedl_chat_close"):
+                st.button("✕", key="nbedl_chat_close_btn", on_click=_toggle_chat)
             render_chat(config_vars, target_vars)
         else:
-            if st.button("분석 도우미에게 물어보기", key="nbedl_chat_open_btn",
-                         help="지금 화면의 데이터를 놓고 대화합니다"):
-                st.session_state[OPEN_KEY] = True
-                st.rerun()
+            st.button("분석 도우미에게 물어보기", key="nbedl_chat_open_btn",
+                      on_click=_toggle_chat, help="지금 화면의 데이터를 놓고 대화합니다")
     inject_html(_CHAT_CSS.replace("%ANCHOR%", CHAT_ANCHOR_ID)
                          .replace("%MASCOT%", MASCOT_WHITE))
