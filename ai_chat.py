@@ -5,8 +5,18 @@
 중앙값, 반복 수, 최소 허용값 충족 여부, 직전 최적화 결과까지 전부 여기서 계산해 표로
 만들어 건네고, 모델에게는 "이 표에서 무엇이 읽히는가"만 묻는다.
 
-키는 이 PC 에 암호화되어 보관되고(secret_store), 복호화된 값은 세션 메모리에만 머문다.
-Excel 저장 경로와는 닿지 않으며, 네트워크 요청은 Gemini 한 곳으로만 나간다.
+키 보관은 **이 앱이 어디서 돌고 있는지에 따라 달라진다.** Streamlit 은 서버에서 파이썬을
+실행하므로, 공유 서버에 게시된 앱에서 키를 파일로 저장하면 그 파일은 서버 한 곳에 생겨
+모든 사용자가 같은 칸을 쓰게 된다. 그래서 접속 호스트를 보고 갈라 둔다.
+
+- **본인 PC 에서 실행 중(localhost)** — 패스프레이즈로 암호화해 이 컴퓨터에 보관한다.
+- **공유 서버에 게시된 앱** — 서버에는 아무것도 남기지 않는다. 키는 그 사람의 세션
+  메모리에만 있고, 다시 입력하는 수고는 **브라우저의 비밀번호 관리자**가 덜어 준다
+  (크롬이 저장·자동완성할 수 있도록 입력칸에 표준 autocomplete 속성을 달아 둔다).
+
+어느 쪽이든 복호화된 값은 세션 메모리에만 머문다. Streamlit 의 세션 상태는 사용자마다
+분리되므로 다른 사용자에게 보이지 않는다. Excel 저장 경로와는 닿지 않으며, 네트워크
+요청은 Gemini 한 곳으로만 나간다.
 """
 
 from __future__ import annotations
@@ -15,9 +25,66 @@ import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 import secret_store
 from analysis import target_direction, direction_label
+
+
+def running_locally():
+    """이 앱이 사용자 본인의 컴퓨터에서 돌고 있는지. 판단이 서지 않으면 '아니오'로 본다.
+
+    서버에 키 파일을 만드는 쪽이 위험한 선택이므로, 애매하면 안전한 쪽(공유 서버로 간주)
+    으로 기운다. 호스트 헤더는 브라우저가 보내는 값이라 위조할 수 있지만, 여기서 막으려는
+    것은 공격이 아니라 **배포 환경을 착각해 서버에 키를 남기는 사고**다.
+    """
+    try:
+        headers = st.context.headers or {}
+    except Exception:
+        return False
+    host = str(headers.get("Host") or headers.get("host") or "").split(":")[0].lower()
+    return host in ("localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0") or host.endswith(".local")
+
+
+def _password_manager_hints():
+    """키 입력칸에 표준 autocomplete 속성을 달아, 크롬이 저장·자동완성하게 한다.
+
+    Streamlit 은 자체 React 컴포넌트를 그리므로 name/autocomplete 속성이 붙지 않는다.
+    그 속성이 없으면 브라우저의 비밀번호 관리자가 그 칸을 비밀번호로 인식하지 못한다.
+    부모 문서에 직접 손대는 방식은 이 앱이 이미 Enter 가로채기와 화면 축소에 쓰고 있다.
+    """
+    components.html("""
+<script>
+(function() {
+  try {
+    var doc = window.parent.document;
+    var apply = function() {
+      var box = doc.querySelector('[data-nbedl-keyform="1"]');
+      var forms = doc.querySelectorAll('[data-testid="stForm"]');
+      forms.forEach(function(f) {
+        var pw = f.querySelector('input[type="password"]');
+        if (!pw || pw.dataset.nbedlHinted) return;
+        pw.dataset.nbedlHinted = "1";
+        pw.setAttribute("name", "nbedl-gemini-key");
+        pw.setAttribute("autocomplete", "current-password");
+        // 크롬은 아이디 칸이 함께 있어야 저장 항목을 구분한다. 보이지 않는 칸을 하나 둔다.
+        if (!f.querySelector('input[name="nbedl-user"]')) {
+          var u = doc.createElement("input");
+          u.type = "text"; u.name = "nbedl-user"; u.autocomplete = "username";
+          u.value = "gemini"; u.readOnly = true; u.tabIndex = -1;
+          u.setAttribute("aria-hidden", "true");
+          u.style.cssText = "position:absolute;opacity:0;height:0;width:0;border:0;padding:0;";
+          f.prepend(u);
+        }
+      });
+    };
+    apply();
+    new window.parent.MutationObserver(apply).observe(doc.body, {childList: true, subtree: true});
+  } catch (err) { /* 무시 */ }
+})();
+</script>
+""", height=0)
+
 
 def _md(df):
     """표를 마크다운으로. tabulate 가 없는 환경에서도 깨지지 않게 폴백을 둔다."""
@@ -106,7 +173,15 @@ def build_context(config_vars, target_vars, max_rows=40):
     tgts = [tv for tv in target_vars if tv.get("Name") and tv["Name"] in df.columns]
     valid = df[df["학습_적용"] == True] if "학습_적용" in df.columns else df  # noqa: E712
 
-    out = [f"학습 적용 {len(valid)}행 / 전체 {len(df)}행. 공정 변수: {', '.join(cfg) or '없음'}.", ""]
+    from data_manage import AGG_LABEL
+    from analysis import COMPOSITE_MODES
+    _agg = st.session_state.get("mobo_copt_agg", "median")
+    _mode = st.session_state.get("mobo_copt_mode", "geometric")
+    out = [f"학습 적용 {len(valid)}행 / 전체 {len(df)}행. 공정 변수: {', '.join(cfg) or '없음'}.",
+           f"사용자가 고른 대표값: {AGG_LABEL.get(_agg, _agg).split(' (')[0]} · "
+           f"종합 방식: {dict(COMPOSITE_MODES).get(_mode, _mode).split(' (')[0]}.",
+           "아래 '조건별 대표값' 표는 중앙값과 평균을 모두 담고 있으니, 둘이 갈리는 조건은 "
+           "대표값 선택에 따라 순위가 뒤집힐 수 있다는 점을 함께 보십시오.", ""]
 
     out.append("## 목표 지표 정의")
     rows = []
@@ -127,7 +202,7 @@ def build_context(config_vars, target_vars, max_rows=40):
         med, mean = g[names].median(), g[names].mean()
         tbl = med.round(6).reset_index()
         tbl.insert(len(cfg), "반복수", g.size().values)
-        out.append("## 조건별 대표값 (같은 조건 반복 시료의 중앙값)")
+        out.append("## 조건별 중앙값 (같은 조건 반복 시료)")
         out.append(_md(tbl.head(max_rows)))
         out.append("")
         # 평균이 중앙값에서 크게 벗어난 칸은 이상치 신호다. 모델이 놓치지 않게 따로 짚어 준다.
@@ -138,6 +213,11 @@ def build_context(config_vars, target_vars, max_rows=40):
                 flags.append({"조건": str(idx), "목표": n,
                               "중앙값": round(float(med[n].loc[idx]), 6),
                               "평균": round(float(mean[n].loc[idx]), 6)})
+        out.append("## 조건별 평균 (같은 조건 반복 시료)")
+        mtbl = mean.round(6).reset_index()
+        mtbl.insert(len(cfg), "반복수", g.size().values)
+        out.append(_md(mtbl.head(max_rows)))
+        out.append("")
         if flags:
             out.append("## 평균이 중앙값에서 1.5배 이상 벗어난 칸 (이상치 의심)")
             out.append(_md(pd.DataFrame(flags).head(max_rows)))
@@ -176,62 +256,106 @@ def build_context(config_vars, target_vars, max_rows=40):
 # ---------------------------------------------------------------------------
 
 def _render_key_panel():
-    """키 잠금 해제 / 저장 / 삭제. 평문 키는 화면에도 세션 위젯에도 남기지 않는다."""
+    """키 잠금 해제 / 저장 / 삭제. 평문 키는 화면에도 위젯 상태에도 남기지 않는다."""
+    local = running_locally()
     have = bool(st.session_state.get(SESSION_KEY))
     with st.expander("🔑 Gemini API 키" + (" — 잠금 해제됨" if have else ""), expanded=not have):
-        if not secret_store.CRYPTO_AVAILABLE:
-            st.error("`cryptography` 패키지가 필요합니다. 터미널에서 `pip install cryptography` 후 앱을 다시 시작하세요.")
-            return
-        st.caption(
-            "키는 **이 PC 에만** 패스프레이즈로 암호화되어 보관됩니다. "
-            f"보관 위치: `{secret_store.store_location()}`  \n"
-            "실험 데이터 Excel 파일에는 **저장되지 않습니다.** 복호화된 키는 앱이 실행 중인 동안 "
-            "메모리에만 있고, 요청은 `generativelanguage.googleapis.com` 한 곳으로만 나갑니다.  \n"
-            "키 발급은 Google AI Studio(aistudio.google.com/apikey)에서 합니다."
-        )
         if have:
-            st.success(f"잠금 해제됨 · 키 {secret_store.mask(st.session_state[SESSION_KEY])}")
-            c1, c2 = st.columns(2)
-            if c1.button("🔒 잠그기 (세션에서 내리기)", use_container_width=True):
+            st.success(f"이 세션에서 사용 중 · 키 {secret_store.mask(st.session_state[SESSION_KEY])}")
+            cols = st.columns(2 if local and secret_store.store_exists() else 1)
+            if cols[0].button("🔒 세션에서 내리기", use_container_width=True):
                 st.session_state.pop(SESSION_KEY, None)
                 st.rerun()
-            if c2.button("🗑️ 저장된 키 삭제", use_container_width=True):
-                secret_store.forget_secret(SECRET_NAME)
-                st.session_state.pop(SESSION_KEY, None)
-                st.rerun()
+            if local and secret_store.store_exists():
+                if cols[1].button("🗑️ 이 컴퓨터에 저장된 키 삭제", use_container_width=True):
+                    secret_store.forget_secret(SECRET_NAME)
+                    st.session_state.pop(SESSION_KEY, None)
+                    st.rerun()
             return
 
-        if secret_store.store_exists():
-            with st.form("gemini_unlock", border=False):
-                pw = st.text_input("패스프레이즈", type="password",
-                                   help="키를 저장할 때 정한 패스프레이즈입니다. 키 자체가 아닙니다.")
-                if st.form_submit_button("🔓 잠금 해제", type="primary", use_container_width=True):
-                    try:
-                        st.session_state[SESSION_KEY] = secret_store.load_secret(SECRET_NAME, pw)
-                        st.rerun()
-                    except secret_store.SecretError as e:
-                        st.error(str(e))
-            st.caption("패스프레이즈를 잊으셨다면 아래에서 키를 다시 등록하세요(기존 것은 덮어씁니다).")
+        _password_manager_hints()
 
-        with st.form("gemini_save", border=False):
-            st.markdown("**키 등록 / 다시 등록**")
-            k = st.text_input("Gemini API 키", type="password", placeholder="AIza…")
-            p1 = st.text_input("사용할 패스프레이즈", type="password")
-            p2 = st.text_input("패스프레이즈 확인", type="password")
-            if st.form_submit_button("💾 암호화해서 저장", use_container_width=True):
-                if not k.strip():
-                    st.error("키를 입력하세요.")
-                elif p1 != p2:
-                    st.error("두 패스프레이즈가 다릅니다.")
-                elif len(p1) < 4:
-                    st.error("패스프레이즈는 4자 이상으로 정하세요.")
-                else:
-                    try:
-                        secret_store.save_secret(SECRET_NAME, k.strip(), p1)
-                        st.session_state[SESSION_KEY] = k.strip()
-                        st.rerun()
-                    except secret_store.SecretError as e:
-                        st.error(str(e))
+        if local:
+            _render_local_key_form()
+        else:
+            _render_shared_key_form()
+
+
+def _render_shared_key_form():
+    """공유 서버에 게시된 앱. 서버에는 아무것도 남기지 않는다."""
+    st.caption(
+        "이 앱은 **서버에서 실행 중**입니다. 그래서 키를 서버에 저장하지 않습니다 — 저장하면 "
+        "그 파일이 서버 한 곳에 생겨 이 앱을 쓰는 모든 사람이 같은 칸을 쓰게 됩니다.  \n"
+        "입력하신 키는 **지금 이 브라우저 세션에만** 머물고, 탭을 닫으면 사라집니다. "
+        "Streamlit 의 세션은 사용자마다 분리되어 있어 다른 사람에게 보이지 않습니다.  \n"
+        "💡 **다시 입력하는 수고는 브라우저에 맡기세요.** 아래 칸은 크롬·엣지의 비밀번호 "
+        "관리자가 인식하도록 되어 있어, 처음 한 번 넣으면 저장할지 물어보고 다음부터 "
+        "자동으로 채워 줍니다. 키는 그 브라우저 안에만 저장되고 서버로는 가지 않습니다.  \n"
+        "키 발급은 Google AI Studio(aistudio.google.com/apikey)에서 합니다. "
+        "**키는 개인 것이므로 다른 사람과 공유하지 마세요.**"
+    )
+    with st.form("gemini_session_key", border=False):
+        k = st.text_input("Gemini API 키", type="password", placeholder="AIza…",
+                          autocomplete="current-password")
+        if st.form_submit_button("▶️ 이 세션에서 사용", type="primary", use_container_width=True):
+            if not k.strip():
+                st.error("키를 입력하세요.")
+            else:
+                st.session_state[SESSION_KEY] = k.strip()
+                st.rerun()
+
+
+def _render_local_key_form():
+    """본인 컴퓨터에서 실행 중. 패스프레이즈로 암호화해 이 컴퓨터에 보관할 수 있다."""
+    if not secret_store.CRYPTO_AVAILABLE:
+        st.warning("`cryptography` 패키지가 없어 이번 세션에만 키를 쓸 수 있습니다. "
+                   "이 컴퓨터에 보관하시려면 `pip install cryptography` 후 앱을 다시 시작하세요.")
+        _render_shared_key_form()
+        return
+    st.caption(
+        "이 앱이 **본인 컴퓨터에서 실행 중**이라, 키를 패스프레이즈로 암호화해 이 컴퓨터에 "
+        f"보관할 수 있습니다. 보관 위치: `{secret_store.store_location()}`  \n"
+        "실험 데이터 Excel 파일에는 **저장되지 않습니다.** 복호화된 키는 앱이 실행 중인 동안 "
+        "메모리에만 있고, 요청은 `generativelanguage.googleapis.com` 한 곳으로만 나갑니다.  \n"
+        "키 발급은 Google AI Studio(aistudio.google.com/apikey)에서 합니다."
+    )
+    if secret_store.store_exists():
+        with st.form("gemini_unlock", border=False):
+            pw = st.text_input("패스프레이즈", type="password",
+                               help="키를 저장할 때 정한 패스프레이즈입니다. 키 자체가 아닙니다.")
+            if st.form_submit_button("🔓 잠금 해제", type="primary", use_container_width=True):
+                try:
+                    st.session_state[SESSION_KEY] = secret_store.load_secret(SECRET_NAME, pw)
+                    st.rerun()
+                except secret_store.SecretError as e:
+                    st.error(str(e))
+        st.caption("패스프레이즈를 잊으셨다면 아래에서 키를 다시 등록하세요(기존 것은 덮어씁니다).")
+
+    with st.form("gemini_save", border=False):
+        st.markdown("**키 등록 / 다시 등록**")
+        k = st.text_input("Gemini API 키", type="password", placeholder="AIza…")
+        p1 = st.text_input("사용할 패스프레이즈", type="password")
+        p2 = st.text_input("패스프레이즈 확인", type="password")
+        c1, c2 = st.columns(2)
+        save = c1.form_submit_button("💾 암호화해서 이 컴퓨터에 저장", use_container_width=True)
+        once = c2.form_submit_button("▶️ 이번 세션에만 사용", use_container_width=True)
+        if save or once:
+            if not k.strip():
+                st.error("키를 입력하세요.")
+            elif once:
+                st.session_state[SESSION_KEY] = k.strip()
+                st.rerun()
+            elif p1 != p2:
+                st.error("두 패스프레이즈가 다릅니다.")
+            elif len(p1) < 4:
+                st.error("패스프레이즈는 4자 이상으로 정하세요.")
+            else:
+                try:
+                    secret_store.save_secret(SECRET_NAME, k.strip(), p1)
+                    st.session_state[SESSION_KEY] = k.strip()
+                    st.rerun()
+                except secret_store.SecretError as e:
+                    st.error(str(e))
 
 
 def render_chat(config_vars, target_vars):

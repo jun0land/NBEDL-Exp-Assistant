@@ -104,18 +104,51 @@ def render_summary(config_vars, target_vars):
 # 고를 수 있는 것은 '조건'이지 '그 시료'가 아니므로, 같은 공정 조건의 반복 시료를 하나로
 # 묶어 조건 자체를 평가한다. 대표값은 이상치 한 개에 흔들리지 않도록 중앙값을 쓴다.
 
-def _condition_table(valid, cfg_names, sel_tvs):
-    """같은 공정 조건끼리 묶어 목표별 중앙값과 반복 수(n)를 담은 표를 만든다."""
+AGG_MODES = [
+    ("median", "중앙값 (권장 · 튀는 시료 하나에 흔들리지 않음)"),
+    ("trimmed", "절사평균 (반복 5회 이상이면 최댓값·최솟값을 하나씩 버리고 평균)"),
+    ("mean", "평균 (이상치가 없다고 볼 때 가장 정보를 많이 씀)"),
+]
+AGG_LABEL = dict(AGG_MODES)
+
+
+def _agg_series(s, mode):
+    """반복 시료 한 묶음을 대표값 하나로. NaN 은 빼고 계산한다."""
+    v = s.dropna()
+    if v.empty:
+        return np.nan
+    if mode == "mean":
+        return float(v.mean())
+    if mode == "trimmed" and len(v) >= 5:
+        # 양 끝을 하나씩만 덜어 낸다. 중앙값처럼 한 점만 보지 않으면서도
+        # 극단값 하나에 끌려가지 않는다.
+        return float(v.sort_values().iloc[1:-1].mean())
+    if mode == "trimmed":
+        return float(v.median())
+    return float(v.median())
+
+
+def _condition_table(valid, cfg_names, sel_tvs, agg="median"):
+    """같은 공정 조건끼리 묶어 목표별 대표값과 반복 수(n)를 담은 표를 만든다.
+
+    평균과 중앙값이 크게 갈리는 칸은 이상치가 있다는 신호이므로, 어느 쪽을 골랐든
+    그 사실을 따로 표시할 수 있게 두 값의 비(skew)도 함께 계산한다.
+    """
     names = [tv["Name"] for tv in sel_tvs]
     work = valid.copy()
     for n in names:
         work[n] = pd.to_numeric(work[n], errors="coerce")
     g = work.groupby(cfg_names, dropna=False, sort=True)
-    med = g[names].median()
+    rep = g[names].agg(lambda s: _agg_series(s, agg))
+    med, mean = g[names].median(), g[names].mean()
     cnt = g[names].count()
-    tbl = med.copy()
+    tbl = rep.copy()
     tbl["n"] = g.size()
     tbl["n_min"] = cnt.min(axis=1)
+    # 평균이 중앙값에서 가장 크게 벗어난 목표의 배율. 1 에서 멀수록 이상치 의심.
+    ratio = (mean / med.replace(0, np.nan)).abs()
+    tbl["skew"] = ratio.apply(lambda r: r.dropna().pipe(
+        lambda x: np.nan if x.empty else float(max(x.max(), 1.0 / max(x.min(), 1e-9)))), axis=1)
     return tbl.reset_index()
 
 
@@ -188,7 +221,25 @@ def render_composite_optimum(config_vars, target_vars, key_prefix="mobo", floors
                 except ValueError:
                     pass
 
-    tbl = _condition_table(valid, cfg_names, sel_tvs)
+    # 두 가지 선택이 순위를 바꾼다. 하나는 반복 시료를 어떤 값으로 대표시킬지,
+    # 다른 하나는 목표들을 어떻게 하나로 합칠지다. 둘 다 사람이 정할 문제이므로
+    # 기본값만 정해 두고 바꿀 수 있게 연다.
+    _c1, _c2 = st.columns(2)
+    with _c1:
+        agg = st.radio(
+            "반복 시료의 대표값", [m[0] for m in AGG_MODES],
+            format_func=lambda k: AGG_LABEL[k], key=f"{key_prefix}_copt_agg",
+            help="같은 조건으로 만든 시료 여럿을 하나의 값으로 줄이는 방법입니다. "
+                 "평균은 정보를 다 쓰지만 튀는 시료 하나에 끌려가고, 중앙값은 그 반대입니다.")
+    with _c2:
+        mode = st.radio(
+            "종합 방식", [m[0] for m in COMPOSITE_MODES],
+            format_func=lambda k: dict(COMPOSITE_MODES)[k],
+            key=f"{key_prefix}_copt_mode",
+            help="여러 목표를 하나의 점수로 합치는 방법입니다. 목표들이 서로를 대신할 수 있으면 "
+                 "산술평균이 맞지만, 모든 목표가 동시에 성립해야 하면 기하평균이나 최솟값이 맞습니다.")
+
+    tbl = _condition_table(valid, cfg_names, sel_tvs, agg=agg)
     if tbl.empty:
         return
     ok, why = _floor_verdict(tbl, sel_tvs, floors)
@@ -199,16 +250,6 @@ def render_composite_optimum(config_vars, target_vars, key_prefix="mobo", floors
             "값을 낮추거나 일부를 비워 두세요."
         )
         return
-
-    # 종합 방식: 목표들을 하나의 수로 어떻게 합칠지. 산술평균은 한 목표의 우수함이 다른
-    # 목표의 부진을 상쇄하므로, 두 모드가 함께 성립해야 하는 문제에서는 상충을 벌주지
-    # 못한다. 기본값을 기하평균으로 둔다.
-    mode = st.radio(
-        "종합 방식", [m[0] for m in COMPOSITE_MODES],
-        format_func=lambda k: dict(COMPOSITE_MODES)[k],
-        key=f"{key_prefix}_copt_mode", horizontal=False,
-        help="여러 목표를 하나의 점수로 합치는 방법입니다. 목표들이 서로를 대신할 수 있으면 "
-             "산술평균이 맞지만, 모든 목표가 동시에 성립해야 하면 기하평균이나 최솟값이 맞습니다.")
 
     # desirability 는 통과한 조건들 사이에서만 0~1 로 매긴다 — 탈락한(사실상 죽은)
     # 조건이 척도의 양 끝을 차지해 살아 있는 조건들의 점수를 뭉개지 않게 하기 위함이다.
@@ -284,12 +325,21 @@ def render_composite_optimum(config_vars, target_vars, key_prefix="mobo", floors
     # ---- 순위표 ----
     show = ranked.head(8).copy()
     show["종합점수"] = show["종합점수"].round(3)
-    show = show.drop(columns=["n_min"]).rename(columns={"n": "반복 수"})
+    # 평균과 중앙값이 1.5 배 이상 갈리는 조건은 표시해 둔다. 어느 대표값을 골랐든,
+    # 그런 조건의 순위는 시료 하나에 좌우되고 있다는 뜻이다.
+    show["⚠"] = ["◆" if (pd.notna(v) and v >= 1.5) else "" for v in show["skew"]]
+    show = show.drop(columns=["n_min", "skew"]).rename(columns={"n": "반복 수"})
     show.insert(0, "순위", range(1, len(show) + 1))
-    show = show[["순위", "종합점수"] + cfg_names + ["반복 수"] + cols]
+    show = show[["순위", "종합점수"] + cfg_names + ["반복 수", "⚠"] + cols]
     st.dataframe(show, use_container_width=True, hide_index=True)
+    if (show["⚠"] == "◆").any():
+        st.warning(
+            "◆ 표시된 조건은 **평균과 중앙값이 1.5배 이상 갈립니다.** 그 조건의 대표값은 시료 "
+            "하나에 좌우되고 있으므로, 대표값을 바꿔 보면 순위가 뒤집히는지 확인해 보세요. "
+            "순위가 뒤집힌다면 그 차이는 아직 이 데이터로 가릴 수 없는 것입니다."
+        )
     st.caption(
-        "목표값은 같은 조건의 반복 시료를 **중앙값**으로 묶은 대표값입니다(평균은 튀는 시료 하나에 끌려갑니다). "
+        f"목표값은 같은 조건의 반복 시료를 **{AGG_LABEL[agg].split(' (')[0]}**으로 묶은 대표값입니다. "
         f"종합점수는 각 목표를 방향에 맞춰 0~1(최선=1)로 매긴 desirability 를 **{dict(COMPOSITE_MODES)[mode].split(' (')[0]}**으로 합친 값입니다. "
         "0점 기준은 최소 허용값(설정했으면) 또는 관측 범위를 조금 넓힌 지점이라, 꼴찌 조건이 무조건 0점이 되지 않습니다."
     )
@@ -310,7 +360,7 @@ def render_composite_optimum(config_vars, target_vars, key_prefix="mobo", floors
         with st.expander(f"🚧 최소 허용값에 걸려 빠진 조건 {n_drop}개"):
             drop = tbl[~ok].copy()
             drop["미달 목표"] = [", ".join(why.loc[i]) for i in drop.index]
-            st.dataframe(drop.drop(columns=["n_min"]).rename(columns={"n": "반복 수"}),
+            st.dataframe(drop.drop(columns=["n_min", "skew"]).rename(columns={"n": "반복 수"}),
                          use_container_width=True, hide_index=True)
             st.caption("데이터를 지운 것이 아니라 이 평가에서만 빠졌습니다. GP 학습에는 그대로 쓰입니다.")
 
