@@ -675,6 +675,10 @@ def render_chat(config_vars, target_vars):
         for h in history:
             with st.chat_message(h["role"]):
                 st.markdown(h["content"])
+        # 새 문답이 들어갈 자리를 '기록 상자 안에' 미리 잡아 둔다.
+        # 입력창이 정의된 뒤에 컨테이너를 새로 만들면 그 컨테이너는 입력창 아래에
+        # 붙어 버려서, 대화가 입력창 밑으로 쌓이고 스크롤 영역 밖으로 나간다.
+        log = st.container()
 
     # 그림 첨부는 입력창 안의 클립으로. 따로 칸을 두면 대화도 시작하기 전에 자리를 먹는다.
     prompt, files = None, []
@@ -708,7 +712,6 @@ def render_chat(config_vars, target_vars):
 
     shown = prompt + (f"\n\n*🖼 그림 {len(imgs)}장 첨부*" if imgs else "")
     history.append({"role": "user", "content": shown})
-    log = st.container(key="nbedl_chat_log_new")
     with log, st.chat_message("user"):
         st.markdown(shown)
     chosen = st.session_state.get(MODEL_KEY) or DEFAULT_MODEL
@@ -790,7 +793,7 @@ _CHAT_CSS = """
       '.nbedl-chat-panel[data-open="1"]>.nbedl-chat-logwrap{',
       '  flex:1 1 auto !important;min-height:0 !important;display:flex !important;',
       '  flex-direction:column !important;overflow:hidden !important;}',
-      '.st-key-nbedl_chat_log,.st-key-nbedl_chat_log_new{',
+      '.st-key-nbedl_chat_log{',
       '  flex:1 1 auto !important;min-height:0 !important;',
       '  overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;padding-right:2px;}',
       /* 표는 좁은 창에서 잘리므로 표만 따로 가로 스크롤한다 */
@@ -891,11 +894,20 @@ _CHAT_CSS = """
       // 대화 기록 상자를 감싼 래퍼를 찾아, 그 래퍼가 창의 남는 높이를 차지하게 한다.
       block.querySelectorAll(':scope > .nbedl-chat-logwrap')
            .forEach(function(el) { el.classList.remove('nbedl-chat-logwrap'); });
-      var log = block.querySelector('.st-key-nbedl_chat_log, .st-key-nbedl_chat_log_new');
+      var log = block.querySelector('.st-key-nbedl_chat_log');
       if (log) {
         var w = log;
         while (w && w.parentElement !== block) w = w.parentElement;
         if (w) w.classList.add('nbedl-chat-logwrap');
+        // 내용이 늘어났으면 맨 아래로 내린다. 사람이 위로 올려 읽는 중이면 건드리지 않는다.
+        var near = log.scrollHeight - log.scrollTop - log.clientHeight < 120;
+        if (log.scrollHeight !== log.dataset.nbedlH) {
+          log.dataset.nbedlH = log.scrollHeight;
+          if (near || !log.dataset.nbedlSeen) {
+            log.dataset.nbedlSeen = '1';
+            log.scrollTop = log.scrollHeight;
+          }
+        }
       }
       place();
     };
