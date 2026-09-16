@@ -2,3 +2,8 @@ venv/
 __pycache__/
 *.xlsx
 AI_EXPERIENCE_액티브러닝.md
+
+# API 키 보관 파일은 사용자 홈(~/.nbedl-exp-assistant/)에 두지만,
+# 실수로 프로젝트 안에 생기더라도 커밋되지 않게 막아 둔다.
+secrets.json
+.nbedl-exp-assistant/

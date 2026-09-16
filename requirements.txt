@@ -5,6 +5,11 @@ openpyxl
 scikit-optimize
 streamlit-extras
 plotly
+requests
+# 분석 도우미(Gemini)용. cryptography 는 API 키를 이 PC 에 암호화해 보관하는 데 쓰고,
+# tabulate 는 모델에게 건넬 표를 마크다운으로 만드는 데 쓴다(없으면 폴백으로 동작).
+cryptography
+tabulate
 
 # CPU-only torch (Streamlit Community Cloud has no GPU; default PyPI torch pulls
 # in the full CUDA stack, which is several GB and can blow past memory limits).

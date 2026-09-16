@@ -31,6 +31,7 @@ from origin_charts import render_variable_charts
 from data_manage import (render_data_manager, render_summary, render_target_selectors,
                          render_composite_optimum)
 import analysis
+import ai_chat
 # 목표 방향(최대화/최소화/특정값 맞추기) 공용 헬퍼 — analysis.py 가 단일 출처다.
 from analysis import (
     DIRECTION_OPTIONS, DIRECTION_LABELS,
@@ -1321,7 +1322,7 @@ elif st.session_state.app_mode == "Dashboard":
             st.session_state.clear()
             st.rerun()
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📝 신규 실험 입력", "🗂️ 데이터베이스 관리", "🔬 데이터 진단", "🤖 AI 최적화 대시보드"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 신규 실험 입력", "🗂️ 데이터베이스 관리", "🔬 데이터 진단", "🤖 AI 최적화 대시보드", "💬 분석 도우미"])
 
     with tab1:
         with st.container(border=True):
@@ -1757,3 +1758,10 @@ elif st.session_state.app_mode == "Dashboard":
                            color_name="blue-70")
             valid_df_charts = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
             render_variable_charts(valid_df_charts, st.session_state.config_vars, st.session_state.target_vars, key_prefix=_chart_prefix)
+    with tab5:
+        with st.container(border=True):
+            colored_header(
+                label="💬 분석 도우미 (Gemini)",
+                description="지금 화면의 데이터를 놓고 대화합니다. 숫자는 이 앱이 미리 계산해 표로 건네고, 모델은 해석만 합니다 — 언어 모델에게 원자료를 주고 평균을 내라고 시키면 틀린 수를 자신 있게 말하기 때문입니다.",
+                color_name="violet-70")
+            ai_chat.render_chat(st.session_state.config_vars, st.session_state.target_vars)
