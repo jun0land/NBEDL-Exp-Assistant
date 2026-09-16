@@ -4,6 +4,7 @@ import numpy as np
 import io
 import os
 import json
+import html as _html
 import base64
 import math
 from skopt import Optimizer
@@ -28,7 +29,8 @@ def colored_header(label, description="", color_name="orange-70"):
 
 from streamlit_extras.metric_cards import style_metric_cards
 from origin_charts import render_variable_charts
-from data_manage import render_data_manager, render_summary, render_target_selectors
+from data_manage import (render_data_manager, render_summary, render_target_selectors,
+                         render_composite_optimum)
 import analysis
 # 목표 방향(최대화/최소화/특정값 맞추기) 공용 헬퍼 — analysis.py 가 단일 출처다.
 from analysis import (
@@ -359,7 +361,7 @@ MANUAL_HTML = """
 <ul>
   <li><b>검색</b>·<b>공정 변수별 필터</b>로 원하는 행만 좁히고, <b>전체 선택/해제</b>로 <b>"학습 적용"</b>을 일괄 관리(해제 = AI 학습에서 제외)</li>
   <li><b>필터된 행 일괄 삭제</b>, <b>표 높이</b> 조절(큰 모니터에서 넓게)</li>
-  <li><b>요약 통계</b> — 변수별 범위·평균과, 모든 목표의 trade-off를 고려한 <b>종합 최적 조건</b> 표시</li>
+  <li><b>요약 통계</b> — 공정 변수별 범위·평균 표시 (모든 목표의 trade-off를 고려한 <b>종합 최적 조건</b>은 🤖 AI 계산 탭 아래쪽으로 옮겼습니다)</li>
 </ul>
 
 <div class="nbedl-step">STEP 4. 데이터 진단 <span class="nbedl-loc">· 🔬 데이터 진단 탭</span></div>
@@ -451,7 +453,9 @@ METHODOLOGY_HTML = """
 <p>공정 변수별 그래프의 추세선은 <b>최소제곱 다항 회귀</b>입니다(기본 1차=선형, 차수 조절 가능). 점들의 경향 요약일 뿐 인과를 뜻하지 않습니다.</p>
 
 <h4>⑧ 정규화 &amp; 종합 최적 조건</h4>
-<p>여러 목표를 한 그래프에 겹칠 때 각 목표를 <b>min–max로 0~1 정규화</b>합니다. "종합 최적 조건"은 각 목표를 방향(최대화/최소화)에 맞춰 0~1로 만든 <b>desirability</b>의 (가중)평균이 가장 높은 실험 조건 — 한쪽으로 치우치지 않은 trade-off 균형점을 고릅니다.</p>
+<p>여러 목표를 한 그래프에 겹칠 때 각 목표를 <b>min–max로 0~1 정규화</b>합니다. "종합 최적 조건"은 각 목표를 방향(최대화/최소화)에 맞춰 0~1로 만든 <b>desirability</b>의 (가중)평균이 가장 높은 조건 — 한쪽으로 치우치지 않은 trade-off 균형점을 고릅니다. AI 후보가 <b>아직 안 해본 지점</b>을 가리키는 것과 달리, 이쪽은 <b>이미 실험한 것 중 지금의 최선</b>이라 둘을 나란히 두고 볼 때 의미가 있어 🤖 AI 계산 탭 아래쪽에 둡니다.</p>
+<p><b>시료가 아니라 조건을 고릅니다.</b> 시료 하나를 집어 추천하면 그 시료의 우연한 편차까지 추천에 섞입니다. 공정에서 실제로 고를 수 있는 것은 조건이므로, 같은 공정 조건의 반복 시료를 <b>중앙값</b>으로 묶어 조건 자체를 평가합니다(평균은 튀는 시료 하나에 끌려갑니다). 파레토 계산에 넣은 <b>최소 허용값</b>도 같은 기준으로 적용해, 그 값에 미달하는 조건은 순위에서 빠집니다.</p>
+<p><b>조건 하나 vs 조건 범위.</b> 1·2위의 종합점수가 소수점 둘째 자리에서 갈린다면 그 차이는 대개 실험 편차 안에 있어, 1위 하나만 믿고 공정을 고정하면 다음 배치에서 순위가 뒤집힐 수 있습니다. 그래서 1위와 설정한 폭 이내로 붙어 있는 조건들을 <b>동급</b>으로 묶어 <b>권장 조건 범위</b>도 같이 보여줍니다. <b>조건 하나</b>는 다음 실험을 어디서 찍을지 정할 때, <b>조건 범위</b>는 그 조건을 공정으로 고정해도 되는지 판단할 때 씁니다. 범위가 넓게 나온다면 지금 데이터로는 그 안에서 우열을 가릴 수 없다는 뜻이므로, 좁히려면 같은 조건을 <b>여러 배치에 걸쳐</b> 반복해야 합니다.</p>
 
 <h4>⑨ 공정 변수의 상관(다중공선성)과 조건 슬라이스</h4>
 <p>실험에서는 공정 변수들이 서로 <b>독립이 아니라 상관</b>되기 쉽습니다(예: 온도를 올리면 반응이 빨라져 시간도 함께 조절하게 됨). 통계적으로 입력 변수끼리 상관이 크면 <b>다중공선성</b>이라 하고, "목표 vs 변수 하나" 그래프에서 다른 변수들이 같이 움직여 <b>어느 변수의 효과인지 뒤섞이는 교란(confounding)</b>이 생깁니다.</p>
@@ -724,6 +728,52 @@ def process_robust_data_multi(df, feature_cols, target_cols):
 
 MOBO_HYPERVOLUME_MAX_OBJECTIVES = 4  # 자동 모드 기준: 이보다 목표가 많으면 스칼라화(ParEGO)로 전환
 MOBO_QLOGNEHVI_HARD_CAP = 6          # 정밀 모드라도 이보다 많으면 qLogNEHVI 불가(8분+) -> ParEGO
+
+
+
+# ---------------------------------------------------------------------------
+# 실험 후보 카드
+# ---------------------------------------------------------------------------
+# st.metric + st.divider 조합은 카드 하나가 화면 한 뼘을 잡아먹어, 후보 3개를 나란히
+# 볼 수 없었다. 정작 판단에 쓰이는 값(기대 개선량)은 st.caption 으로 제일 작게 찍혔다.
+# 그래서 카드 한 장을 한 덩어리 HTML 로 그려 여백을 줄이고, 기대 개선량을 제목 줄로
+# 끌어올린다. 인라인 스타일은 리런 때 사라질 수 있으므로 규칙은 <style> 로 주입한다.
+CANDIDATE_CARD_CSS = """
+<style>
+.cand-card{border:1px solid rgba(49,51,63,.18);border-left:4px solid #ed542b;border-radius:8px;
+  padding:.45rem .7rem .5rem;margin:0 0 .4rem;}
+.cand-top{display:flex;align-items:baseline;gap:.6rem;flex-wrap:wrap;margin-bottom:.3rem;}
+.cand-no{font-weight:800;color:#ed542b;font-size:.8rem;letter-spacing:.02em;white-space:nowrap;}
+.cand-ei{margin-left:auto;text-align:right;white-space:nowrap;}
+.cand-ei .lab{font-size:.72rem;opacity:.6;margin-right:.3rem;}
+.cand-ei .val{font-size:1.02rem;font-weight:800;color:#ed542b;}
+.cand-ei .sub{font-size:.74rem;opacity:.7;margin-left:.3rem;}
+.cand-cond{display:flex;flex-wrap:wrap;gap:.1rem 1.1rem;line-height:1.3;}
+.cand-cond .k{font-size:.72rem;opacity:.55;margin-right:.25rem;}
+.cand-cond .v{font-size:.92rem;font-weight:700;}
+.cand-pred{margin-top:.3rem;font-size:.72rem;opacity:.62;line-height:1.3;word-break:break-all;}
+</style>
+"""
+
+
+def render_candidate_card(no, cond_pairs, pred_txt="", ei_label="", ei_value="", ei_sub="", ei_grade=""):
+    """후보 카드 한 장. cond_pairs 는 (변수명, 표시값) 목록."""
+    e = _html.escape
+    cond = "".join(
+        f"<span><span class='k'>{e(str(k))}</span><span class='v'>{e(str(v))}</span></span>"
+        for k, v in cond_pairs)
+    ei = ""
+    if ei_value:
+        ei = (f"<span class='cand-ei'><span class='lab'>{e(ei_label)}</span>"
+              f"<span class='val'>{e(ei_value)}</span>"
+              + (f"<span class='sub'>{e(ei_sub)}</span>" if ei_sub else "")
+              + (f"<span class='sub'>· {e(ei_grade)}</span>" if ei_grade else "")
+              + "</span>")
+    pred = f"<div class='cand-pred'>{e(pred_txt)}</div>" if pred_txt else ""
+    st.markdown(
+        f"<div class='cand-card'><div class='cand-top'><span class='cand-no'>실험 후보 {no}</span>{ei}</div>"
+        f"<div class='cand-cond'>{cond}</div>{pred}</div>",
+        unsafe_allow_html=True)
 
 
 def improvement_label(ratio):
@@ -1485,21 +1535,22 @@ elif st.session_state.app_mode == "Dashboard":
                                    "판단할 수 없어, **지금까지 관측값이 흩어진 폭(스프레드) 대비 비율**을 같이 표시합니다.  \n"
                                    + EI_GRADE_LEGEND)
 
+                    st.markdown(CANDIDATE_CARD_CSS, unsafe_allow_html=True)
                     for i, points in enumerate(res["next_points"]):
-                        with st.container(border=True):
-                            st.markdown(f"<h5 style='margin:0; font-weight: 800; color: #ed542b;'>실험 후보 {i+1}</h5>", unsafe_allow_html=True)
-                            st.divider()
-                            cols_rec = st.columns(len(res["f_names"]))
-                            for idx, (var, val) in enumerate(zip(st.session_state.config_vars, points)):
-                                unit_str = f" {var['Unit']}" if var.get("Unit") else ""
-                                cols_rec[idx].metric(label=var["Name"], value=f"{round(val, 3)}{unit_str}")
-                            style_metric_cards(background_color="transparent", border_left_color="#ed542b", border_color="transparent", box_shadow=False)
-                            if res.get("ei_values"):
-                                ei = res["ei_values"][i]
-                                spread = res.get("y_spread") or 0
-                                ratio = (ei / spread) if spread > 1e-12 else None
-                                ratio_txt = f" (관측 스프레드 대비 {ratio*100:.1f}%)" if ratio is not None else ""
-                                st.caption(f"기대 개선량(EI): {ei:.4g}{ratio_txt} — {improvement_label(ratio)}")
+                        pairs = []
+                        for var, val in zip(st.session_state.config_vars, points):
+                            unit_str = f" {var['Unit']}" if var.get("Unit") else ""
+                            pairs.append((var["Name"], f"{round(val, 3)}{unit_str}"))
+                        ei_v = ei_sub = ei_grade = ""
+                        if res.get("ei_values"):
+                            ei = res["ei_values"][i]
+                            spread = res.get("y_spread") or 0
+                            ratio = (ei / spread) if spread > 1e-12 else None
+                            ei_v = f"{ei:.4g}"
+                            ei_sub = f"(스프레드 대비 {ratio*100:.1f}%)" if ratio is not None else ""
+                            ei_grade = improvement_label(ratio)
+                        render_candidate_card(i + 1, pairs, ei_label="기대 개선량(EI)",
+                                              ei_value=ei_v, ei_sub=ei_sub, ei_grade=ei_grade)
 
                     with st.expander("🔍 AI 연산 피팅 로그 데이터"):
                         debug_df = pd.DataFrame(res["X_train"], columns=res["f_names"])
@@ -1656,27 +1707,42 @@ elif st.session_state.app_mode == "Dashboard":
                                    "계산했으므로, 값 자체보다는 그 후보 카드 안의 상대적 크기(관측 스프레드 대비 %)로 "
                                    "봐주세요.  \n" + EI_GRADE_LEGEND)
 
+                    st.markdown(CANDIDATE_CARD_CSS, unsafe_allow_html=True)
                     for i, (point, pred) in enumerate(zip(res["candidates"], res["predicted_Y"])):
-                        with st.container(border=True):
-                            st.markdown(f"<h5 style='margin:0; font-weight: 800; color: #ed542b;'>실험 후보 {i+1}</h5>", unsafe_allow_html=True)
-                            st.divider()
-                            cols_rec = st.columns(len(res["f_names"]))
-                            for idx, (var, val) in enumerate(zip(st.session_state.config_vars, point)):
-                                unit_str = f" {var['Unit']}" if var.get("Unit") else ""
-                                disp_val = f"{round(val, 3)}{unit_str}" if isinstance(val, float) else f"{val}{unit_str}"
-                                cols_rec[idx].metric(label=var["Name"], value=disp_val)
-                            style_metric_cards(background_color="transparent", border_left_color="#ed542b", border_color="transparent", box_shadow=False)
-                            pred_str = " · ".join(
-                                f"{tv['Name']} ≈ {p:.6f}{' ' + tv['Unit'] if tv.get('Unit') else ''}"
-                                for tv, p in zip(res["sel_tvs"], pred)
-                            )
-                            st.caption(f"예측 목표값: {pred_str}")
-                            if ei_info:
-                                item = ei_info["items"][i]
-                                ratio = item["ratio"]
-                                ratio_txt = f" ({'현재 파레토 프론트 부피' if ei_info['mode'] == 'hv' else '관측 스프레드'} 대비 {ratio*100:.1f}%)" if ratio is not None else ""
-                                ei_label = "기대 하이퍼볼륨 증가량" if ei_info["mode"] == "hv" else "기대 개선량(EI, 스칼라화 기준)"
-                                st.caption(f"{ei_label}: {item['value']:.4g}{ratio_txt} — {improvement_label(ratio)}")
+                        pairs = []
+                        for var, val in zip(st.session_state.config_vars, point):
+                            unit_str = f" {var['Unit']}" if var.get("Unit") else ""
+                            disp_val = f"{round(val, 3)}{unit_str}" if isinstance(val, float) else f"{val}{unit_str}"
+                            pairs.append((var["Name"], disp_val))
+                        pred_str = "예측 " + " · ".join(
+                            f"{tv['Name']} ≈ {p:.4g}{' ' + tv['Unit'] if tv.get('Unit') else ''}"
+                            for tv, p in zip(res["sel_tvs"], pred)
+                        )
+                        ei_label = ei_v = ei_sub = ei_grade = ""
+                        if ei_info:
+                            item = ei_info["items"][i]
+                            ratio = item["ratio"]
+                            base = "프론트 부피" if ei_info["mode"] == "hv" else "관측 스프레드"
+                            ei_label = "기대 하이퍼볼륨 증가량" if ei_info["mode"] == "hv" else "기대 개선량(EI)"
+                            ei_v = f"{item['value']:.4g}"
+                            ei_sub = f"({base} 대비 {ratio*100:.1f}%)" if ratio is not None else ""
+                            ei_grade = improvement_label(ratio)
+                        render_candidate_card(i + 1, pairs, pred_txt=pred_str, ei_label=ei_label,
+                                              ei_value=ei_v, ei_sub=ei_sub, ei_grade=ei_grade)
+        # ---- 지금까지 데이터 기준 '종합 최적 조건' (조건 단위) ----
+        # AI 후보는 '아직 안 해본 지점'을 가리키므로, 지금 손에 쥔 최선이 무엇인지 나란히
+        # 두고 봐야 후보가 그보다 나아질 여지가 있는지 판단할 수 있다. 데이터 진단 탭에
+        # 있던 것을 이리로 옮기면서, 시료 하나를 집던 방식을 조건 단위로 바꾸고 위에서
+        # 설정한 최소 허용값을 그대로 적용한다.
+        st.divider()
+        with st.container(border=True):
+            colored_header(
+                label="🎯 종합 최적 조건 (지금까지의 실측 데이터)",
+                description="아직 안 해본 후보가 아니라, 이미 실험한 조건 중 모든 목표의 균형이 가장 좋은 조건입니다. 같은 조건의 반복 시료를 묶어 조건 단위로 평가하고, 위에서 설정한 최소 허용값을 그대로 적용합니다.",
+                color_name="violet-70")
+            render_composite_optimum(st.session_state.config_vars, st.session_state.target_vars,
+                                     key_prefix="mobo")
+
         # ---- 공정 변수별 목표 지표 분포 (Origin 스타일) ----
         st.divider()
         with st.container(border=True):

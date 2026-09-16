@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from analysis import desirability, direction_arrow
+from analysis import desirability, direction_arrow, direction_label, target_direction
 
 EDITOR_HEIGHT = 560
 
@@ -51,9 +51,9 @@ def render_target_selectors(target_vars, key_prefix, per_row=2):
 
 
 def _render_summary(df, config_vars, target_vars, cfg_names):
-    """요약 통계 + 목표별 '최적 조건'. 최고 raw 값은 이상치일 수 있으므로 학습 적용
-    데이터(수동 제외분 반영) 기준으로, 목표 방향(Max/Min)에 맞는 최적 조건을 보여준다."""
-    with st.expander("📊 요약 통계 · 종합 최적 조건", expanded=False):
+    """공정 변수별 범위·평균 요약. 종합 최적 조건은 AI 계산 탭의
+    render_composite_optimum 으로 옮겨 갔다(조건 단위 평가 + 최소 허용값 적용)."""
+    with st.expander("📊 요약 통계", expanded=False):
         valid = df[df["학습_적용"] == True] if "학습_적용" in df.columns else df  # noqa: E712
         st.caption(f"학습 적용 {len(valid)}행 / 전체 {len(df)}행 기준")
 
@@ -78,74 +78,226 @@ def _render_summary(df, config_vars, target_vars, cfg_names):
             st.caption("유효한 목표 지표 데이터가 없어 최적 조건을 계산할 수 없습니다.")
             return
 
-        # 여러 목표의 trade-off 를 함께 고려한 '종합 최적 조건' 하나를 고른다.
-        # 각 목표를 방향(최대화/최소화)에 맞춰 0~1 로 정규화(최선=1)한 desirability 점수를 만들고,
-        # 목표 점수의 평균이 가장 높은 실험 조건을 뽑는다 — 한 목표만 뛰어나고 나머지가 나쁜 조건은
-        # 평균이 낮아 밀리고, 전체적으로 균형 잡힌(파레토상 타협점에 가까운) 조건이 선택된다.
-        score_df = pd.DataFrame(index=valid.index)
-        for tv in tgts:
-            col = pd.to_numeric(valid[tv["Name"]], errors="coerce")
-            # 방향별 desirability (최대화=클수록, 최소화=작을수록, 특정값=목표값에 가까울수록 1)
-            score_df[tv["Name"]] = desirability(col, tv)
-
-        # 목표별 '포함 여부 + 가중치'를 한 줄에: [체크박스=이름/방향] [가중치칸]. 체크 해제한 목표는
-        # 종합 최적 조건 계산에서 빠지고, 그 목표의 가중치칸은 비활성화된다.
-        st.caption("종합 최적 조건에 포함할 목표와 가중치 (체크 해제 시 제외 · 기본 가중치 1)")
-        sel_names, weights = render_target_selectors(tgts, "sum")
-
-        sel = [tv for tv in tgts if tv["Name"] in sel_names]
-        if not sel:
-            st.caption("최소 1개 이상의 목표를 선택하세요.")
-            return
-
-        # 가중 평균 desirability (선택 목표만). 행마다 값이 있는 목표들만으로 정규화(NaN 목표는 건너뜀).
-        cols = [tv["Name"] for tv in sel]
-        w = np.array([weights[c] for c in cols], dtype=float)
-        if w.sum() <= 0:
-            w = np.ones(len(cols))  # 전부 0 이면 동일 가중으로 폴백
-        S = score_df[cols].to_numpy(dtype=float)
-        present = ~np.isnan(S)
-        wsum = np.where(present, w[np.newaxis, :], 0.0).sum(axis=1)
-        num = np.where(present, np.nan_to_num(S) * w[np.newaxis, :], 0.0).sum(axis=1)
-        comp_vals = np.where(wsum > 0, num / np.where(wsum > 0, wsum, 1.0), np.nan)
-        composite = pd.Series(comp_vals, index=valid.index)
-        if composite.dropna().empty:
-            st.caption("종합 점수를 계산할 수 없습니다.")
-            return
-        best_idx = composite.idxmax()
-        custom_w = any(abs(weights[c] - weights[cols[0]]) > 1e-9 for c in cols)
-
-        cond = " · ".join(f"{n}={valid.loc[best_idx, n]}" for n in cfg_names)
-        sample = valid.loc[best_idx, "샘플명"] if "샘플명" in valid.columns else ""
-        excl_note = f" (제외 {len(tgts) - len(sel)}개)" if len(sel) < len(tgts) else ""
-        target_names = ", ".join(
-            f"{tv['Name']}({direction_arrow(tv)}"
-            + (f"×{weights[tv['Name']]:g}" if custom_w else "") + ")" for tv in sel)
-        w_note = " · 가중치 적용됨" if custom_w else ""
-        st.markdown(f"**🎯 종합 최적 조건** — 선택 목표{excl_note}({target_names})의 방향·trade-off 를 함께 고려한 균형점{w_note}")
-        if cond:
-            line = f"- 조건: **{cond}**"
-            if isinstance(sample, str) and sample.strip():
-                line += f"  ·  샘플: {sample}"
-            st.markdown(line)
-        vals = []
-        for tv in sel:
-            v = pd.to_numeric(valid[tv["Name"]], errors="coerce").loc[best_idx]
-            unit = f" {tv['Unit']}" if tv.get("Unit") else ""
-            vals.append(f"{tv['Name']}{direction_arrow(tv)} {v:.6g}{unit}")
-        st.markdown(f"- 그 조건의 목표값: {' · '.join(vals)}  ·  종합점수 **{composite.loc[best_idx]:.3f}** / 1")
-        st.caption("각 목표를 방향에 맞춰 0~1(최선=1)로 정규화한 desirability 의 평균이 최대인 실험 조건입니다. "
-                   "여러 목표가 상충할 때 한쪽으로 치우치지 않은 균형 조건을 고릅니다.")
+        st.caption(
+            "**종합 최적 조건**은 이제 **AI 계산 탭 아래쪽**에서 보여줍니다. "
+            "거기서는 시료 하나를 집어 주는 대신 같은 공정 조건의 반복 시료를 묶어 **조건 자체**를 평가하고, "
+            "AI 계산에 넣은 **최소 허용값**을 그대로 적용합니다."
+        )
 
 
 def render_summary(config_vars, target_vars):
-    """요약 통계 · 종합 최적 조건만 따로 렌더한다(데이터 진단 탭에서 호출). 세션의 df 를 읽는다."""
+    """요약 통계만 따로 렌더한다(데이터 진단 탭에서 호출). 세션의 df 를 읽는다."""
     df = st.session_state.df_data
     if df is None or df.empty:
         st.info("아직 입력된 데이터가 없습니다. '신규 실험 입력' 탭에서 데이터를 추가하세요.")
         return
     cfg_names = [v["Name"] for v in config_vars if v.get("Name") and v["Name"] in df.columns]
     _render_summary(df, config_vars, target_vars, cfg_names)
+
+
+
+# ---------------------------------------------------------------------------
+# 조건 단위 '종합 최적 조건'
+# ---------------------------------------------------------------------------
+# 시료 한 개를 집어 추천하면 그 시료의 우연한 편차까지 추천에 섞인다. 공정에서 실제로
+# 고를 수 있는 것은 '조건'이지 '그 시료'가 아니므로, 같은 공정 조건의 반복 시료를 하나로
+# 묶어 조건 자체를 평가한다. 대표값은 이상치 한 개에 흔들리지 않도록 중앙값을 쓴다.
+
+def _condition_table(valid, cfg_names, sel_tvs):
+    """같은 공정 조건끼리 묶어 목표별 중앙값과 반복 수(n)를 담은 표를 만든다."""
+    names = [tv["Name"] for tv in sel_tvs]
+    work = valid.copy()
+    for n in names:
+        work[n] = pd.to_numeric(work[n], errors="coerce")
+    g = work.groupby(cfg_names, dropna=False, sort=True)
+    med = g[names].median()
+    cnt = g[names].count()
+    tbl = med.copy()
+    tbl["n"] = g.size()
+    tbl["n_min"] = cnt.min(axis=1)
+    return tbl.reset_index()
+
+
+def _floor_verdict(tbl, sel_tvs, floors):
+    """조건별 '최소 허용값' 충족 여부와, 미달한 목표 이름들을 돌려준다.
+    최대화 목표는 이 값 이상이어야 하고, 최소화 목표는 이 값 이하여야 한다."""
+    ok = pd.Series(True, index=tbl.index)
+    why = pd.Series([[] for _ in range(len(tbl))], index=tbl.index)
+    for tv in sel_tvs:
+        f = floors.get(tv["Name"])
+        if f is None:
+            continue
+        d = target_direction(tv)
+        col = pd.to_numeric(tbl[tv["Name"]], errors="coerce")
+        if d == "Maximize":
+            bad = (col < f)
+        elif d == "Minimize":
+            bad = (col > f)
+        else:
+            continue
+        bad = bad.fillna(False)
+        ok &= ~bad
+        for i in tbl.index[bad]:
+            why.loc[i] = why.loc[i] + [tv["Name"]]
+    return ok, why
+
+
+def render_composite_optimum(config_vars, target_vars, key_prefix="mobo", floors=None):
+    """지금까지 쌓인 데이터만으로 고른 '종합 최적 조건'을 조건 단위로 보여준다.
+
+    AI 후보가 '다음에 해볼 만한 미지의 지점'이라면, 이쪽은 '이미 실험해 본 것 중 현재
+    가장 균형이 좋은 조건'이다. 둘을 나란히 두면 후보가 지금 최선보다 나아질 여지가
+    있는지 가늠할 수 있어 AI 결과 옆에 둔다. 목표 선택·가중치·최소 허용값은 AI 계산에
+    쓴 것(key_prefix 위젯)을 그대로 읽어 같은 기준으로 평가한다."""
+    df = st.session_state.get("df_data")
+    if df is None or df.empty:
+        return
+    cfg_names = [v["Name"] for v in config_vars if v.get("Name") and v["Name"] in df.columns]
+    if not cfg_names:
+        return
+    valid = df[df["학습_적용"] == True] if "학습_적용" in df.columns else df  # noqa: E712
+    if valid.empty:
+        return
+
+    # AI 계산과 동일한 목표 선택·가중치를 세션 위젯에서 읽는다(탭을 안 열었으면 기본값).
+    sel_tvs, weights = [], {}
+    for tv in target_vars:
+        name = tv.get("Name")
+        if not name or name not in valid.columns:
+            continue
+        if not pd.to_numeric(valid[name], errors="coerce").notna().any():
+            continue
+        if not st.session_state.get(f"{key_prefix}_incl_{name}", True):
+            continue
+        sel_tvs.append(tv)
+        try:
+            weights[name] = float(st.session_state.get(f"{key_prefix}_w_{name}", 1.0))
+        except (TypeError, ValueError):
+            weights[name] = 1.0
+    if not sel_tvs:
+        return
+
+    if floors is None:
+        floors = {}
+        for tv in sel_tvs:
+            raw = str(st.session_state.get(f"mobo_floor_{tv['Name']}", "") or "").strip()
+            if raw:
+                try:
+                    floors[tv["Name"]] = float(raw)
+                except ValueError:
+                    pass
+
+    tbl = _condition_table(valid, cfg_names, sel_tvs)
+    if tbl.empty:
+        return
+    ok, why = _floor_verdict(tbl, sel_tvs, floors)
+    passed = tbl[ok]
+    if passed.empty:
+        st.warning(
+            "최소 허용값을 모든 목표에서 동시에 넘는 **조건**이 하나도 없습니다. "
+            "값을 낮추거나 일부를 비워 두세요."
+        )
+        return
+
+    # desirability 는 통과한 조건들 사이에서만 0~1 로 정규화한다 — 탈락한(사실상 죽은)
+    # 조건이 척도의 양 끝을 차지해 살아 있는 조건들의 점수를 뭉개지 않게 하기 위함이다.
+    score = pd.DataFrame(index=passed.index)
+    for tv in sel_tvs:
+        score[tv["Name"]] = desirability(pd.to_numeric(passed[tv["Name"]], errors="coerce"), tv)
+    cols = [tv["Name"] for tv in sel_tvs]
+    w = np.array([weights[c] for c in cols], dtype=float)
+    if w.sum() <= 0:
+        w = np.ones(len(cols))
+    S = score[cols].to_numpy(dtype=float)
+    present = ~np.isnan(S)
+    wsum = np.where(present, w[np.newaxis, :], 0.0).sum(axis=1)
+    num = np.where(present, np.nan_to_num(S) * w[np.newaxis, :], 0.0).sum(axis=1)
+    comp = pd.Series(np.where(wsum > 0, num / np.where(wsum > 0, wsum, 1.0), np.nan),
+                     index=passed.index)
+    if comp.dropna().empty:
+        return
+
+    ranked = passed.copy()
+    ranked["종합점수"] = comp
+    ranked = ranked.sort_values("종합점수", ascending=False)
+    best = ranked.iloc[0]
+
+    custom_w = any(abs(weights[c] - weights[cols[0]]) > 1e-9 for c in cols)
+    tgt_txt = ", ".join(
+        f"{tv['Name']}({direction_arrow(tv)}" + (f"×{weights[tv['Name']]:g}" if custom_w else "") + ")"
+        for tv in sel_tvs)
+    sel_names = {tv["Name"] for tv in sel_tvs}
+    excluded = [tv.get("Name") for tv in target_vars
+                if tv.get("Name") and tv["Name"] not in sel_names and tv["Name"] in valid.columns]
+    floor_txt = " · ".join(f"{k} {v:g}" for k, v in floors.items()) if floors else "적용 안 함"
+
+    st.caption(
+        f"평가 대상 목표: {tgt_txt}"
+        + (f"  ·  제외 {len(excluded)}개" if excluded else "")
+        + f"  ·  최소 허용값: {floor_txt}"
+    )
+
+    # ---- 조건 하나 ----
+    cond_txt = " · ".join(f"{n} = **{best[n]}**" for n in cfg_names)
+    st.markdown(
+        f"🥇 **지금까지 최선의 조건** — {cond_txt}  \n"
+        f"　반복 {int(best['n'])}회 · 종합점수 **{best['종합점수']:.3f}** / 1"
+    )
+    if int(best["n_min"]) < 3:
+        st.caption("⚠️ 이 조건의 반복 수가 3회 미만이라 중앙값이 아직 흔들립니다. 순위를 그대로 믿지 마세요.")
+
+    # ---- 조건 범위 ----
+    # 점수 1~2위가 소수점 둘째 자리에서 갈리는 정도면 그 차이는 실험 편차 안이다.
+    # 그래서 '한 점'이 아니라 '비슷한 점수의 조건들이 이루는 구간'을 함께 제시한다.
+    margin = st.slider(
+        "권장 범위로 묶을 종합점수 차이", 0.0, 0.30, 0.05, 0.01,
+        key=f"{key_prefix}_copt_margin",
+        help="1위와 이 값 이내로 붙어 있는 조건들을 '사실상 동급'으로 보고 한 구간으로 묶습니다. "
+             "0 으로 두면 1위 조건 하나만 남습니다.")
+    band = ranked[ranked["종합점수"] >= best["종합점수"] - margin]
+    if len(band) > 1:
+        parts = []
+        for n in cfg_names:
+            s = pd.to_numeric(band[n], errors="coerce")
+            if s.notna().all() and s.min() != s.max():
+                parts.append(f"{n} **{s.min():g} ~ {s.max():g}**")
+            else:
+                vs = sorted({str(v) for v in band[n]})
+                parts.append(f"{n} **{', '.join(vs)}**")
+        st.markdown(
+            "🎯 **권장 조건 범위** — " + " · ".join(parts)
+            + f"  \n　동급 조건 {len(band)}개 · 종합점수 {band['종합점수'].min():.3f}~{band['종합점수'].max():.3f}"
+            f" · 반복 합계 {int(band['n'].sum())}회"
+        )
+    else:
+        st.markdown("🎯 **권장 조건 범위** — 1위와 동급인 조건이 없어 위 조건 하나로 좁혀집니다.")
+
+    # ---- 순위표 ----
+    show = ranked.head(8).copy()
+    show["종합점수"] = show["종합점수"].round(3)
+    show = show.drop(columns=["n_min"]).rename(columns={"n": "반복 수"})
+    show.insert(0, "순위", range(1, len(show) + 1))
+    show = show[["순위", "종합점수"] + cfg_names + ["반복 수"] + cols]
+    st.dataframe(show, use_container_width=True, hide_index=True)
+    st.caption(
+        "목표값은 같은 조건의 반복 시료를 **중앙값**으로 묶은 대표값입니다(평균은 튀는 시료 하나에 끌려갑니다). "
+        "종합점수는 각 목표를 방향에 맞춰 0~1(최선=1)로 정규화한 desirability 의 가중평균입니다."
+    )
+
+    n_drop = int((~ok).sum())
+    if n_drop:
+        with st.expander(f"🚧 최소 허용값에 걸려 빠진 조건 {n_drop}개"):
+            drop = tbl[~ok].copy()
+            drop["미달 목표"] = [", ".join(why.loc[i]) for i in drop.index]
+            st.dataframe(drop.drop(columns=["n_min"]).rename(columns={"n": "반복 수"}),
+                         use_container_width=True, hide_index=True)
+            st.caption("데이터를 지운 것이 아니라 이 평가에서만 빠졌습니다. GP 학습에는 그대로 쓰입니다.")
+
+    st.caption(
+        "**조건 하나**는 다음 실험을 당장 어디서 찍을지 정할 때 쓰고, **조건 범위**는 그 조건을 "
+        "공정으로 고정해도 되는지 판단할 때 씁니다. 범위가 넓게 잡힌다면 그만큼 이 데이터로는 "
+        "그 안에서 우열을 가릴 수 없다는 뜻이므로, 좁히려면 같은 조건을 여러 배치에 걸쳐 반복해야 합니다."
+    )
 
 
 def render_data_manager(config_vars, target_vars, passive_vars):
