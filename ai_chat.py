@@ -135,7 +135,7 @@ MODEL_PREFERENCE = [
 ]
 DEFAULT_MODEL = MODEL_PREFERENCE[0]
 REQUEST_TIMEOUT = 90
-ATTEMPTS_PER_MODEL = 2          # 같은 모델에 몇 번까지 다시 물어볼지
+ATTEMPTS_PER_MODEL = 3          # 같은 모델에 몇 번까지 다시 물어볼지
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 IMAGE_KEY = "gemini_chat_images"
 
@@ -186,16 +186,23 @@ def _tier_of(name):
     return m.group(2) if m else ""
 
 
+# 혼잡할 때 어느 등급으로 넘어갈지. 답이 아예 안 오는 것보다는 낫다는 이유로 무조건
+# 가벼운 쪽으로 내려가면, 판단이 섞인 질문에서 답의 질이 눈에 띄게 떨어진다. 그래서
+# Flash 가 막히면 Lite 가 아니라 Pro 를 먼저 시도한다.
+FALLBACK_BY_TIER = {
+    "flash": ["pro", "flash-lite"],
+    "flash-lite": ["flash", "pro"],
+    "pro": ["flash", "flash-lite"],
+}
+
+
 def fallback_order(chosen, curated):
-    """혼잡할 때 넘어갈 순서. 고른 등급과 성격이 가까운 것부터 시도한다."""
-    order = [t for t, _ in MODEL_TIERS]
-    try:
-        here = order.index(_tier_of(chosen))
-    except ValueError:
-        here = order.index(DEFAULT_TIER)
-    rest = [n for n, _ in curated if n != chosen]
-    return sorted(rest, key=lambda n: abs(order.index(_tier_of(n)) - here)
-                  if _tier_of(n) in order else 99)
+    """혼잡할 때 넘어갈 순서."""
+    avail = {_tier_of(n): n for n, _ in curated if n != chosen}
+    want = FALLBACK_BY_TIER.get(_tier_of(chosen)) or FALLBACK_BY_TIER[DEFAULT_TIER]
+    out = [avail[t] for t in want if t in avail]
+    out += [n for n, _ in curated if n != chosen and n not in out]
+    return out
 
 
 class GeminiError(RuntimeError):
@@ -218,14 +225,45 @@ def _friendly_error(status, text):
 
 SYSTEM_PROMPT = """당신은 페로브스카이트/실리콘 듀얼모드 광검출기를 연구하는 대학원생의 실험 데이터 분석을 돕습니다.
 
-지켜야 할 것:
+# 내용에 관한 규칙
+
 1. 아래에 주어진 표의 숫자만 쓰십시오. 표에 없는 값을 추정하거나 지어내지 마십시오. 필요한 값이 표에 없으면 "그 값은 지금 주어진 표에 없습니다"라고 말하고, 어떤 계산을 하면 되는지 알려 주십시오.
 2. 새로 산술 계산을 하지 마십시오. 비교와 순위, 경향 읽기, 해석, 실험 설계 제안이 당신의 역할입니다.
 3. 표본 수를 항상 함께 보십시오. 반복 수가 3 미만인 조건의 중앙값은 흔들린다는 점을 지적하십시오.
 4. 평균과 중앙값이 크게 다른 조건이 보이면 그 차이가 이상치 때문일 수 있다고 짚으십시오.
 5. 조건마다 배치가 다르면 조건 효과와 배치 효과가 섞인다는 점(교란)을 염두에 두십시오.
 6. 확신할 수 없는 것은 확신할 수 없다고 말하십시오. 추측을 사실처럼 쓰지 마십시오.
-7. 한국어로, 완성된 문장으로 답하십시오. 명사구로 문장을 끝내지 마십시오. 표가 도움이 되면 표를 쓰십시오.
+7. 선택지가 갈리는 문제에서 당신이 대신 고르지 마십시오. 각 선택지와 그 결과를 보여 주고, 판단은 사용자에게 넘기십시오.
+
+# 형식에 관한 규칙
+
+가장 흔한 실패는 답이 한 덩어리 줄글로 나오는 것입니다. 아래를 지키십시오.
+
+1. **결론을 맨 앞에 한두 문장으로** 씁니다. 근거는 그 뒤에 펼칩니다.
+2. **한 문단은 세 줄을 넘기지 않습니다.** 말이 바뀌면 문단을 나눕니다.
+3. **근거가 둘 이상이면 목록으로** 나열하고, 각 항목은 굵은 글씨 라벨로 시작합니다.
+4. **숫자를 셋 이상 견주면 표로** 만듭니다. 줄글 안에 숫자를 늘어놓지 마십시오.
+5. 소제목(`###`)은 답이 길어질 때만 씁니다. 짧은 답에는 쓰지 않습니다.
+6. 조건과 목표의 이름은 표에 적힌 그대로 씁니다. 줄여 쓰거나 바꿔 부르지 마십시오.
+7. 마지막에 **「그래서 무엇을 하면 되는가」를 한 줄**로 덧붙입니다. 덧붙일 말이 없으면 생략합니다.
+
+## 답의 모양 (예시)
+
+> 세 대표값 모두에서 13초가 1위이므로, 이 순위는 이상치 하나에 좌우되지 않습니다.
+>
+> - **1위는 흔들리지 않습니다.** 중앙값·절사평균·평균에서 모두 13초가 1위입니다.
+> - **2위와 4위는 뒤집힙니다.** 28초와 15초의 순위가 대표값에 따라 바뀝니다.
+>
+> | 조건 | 중앙값 | 평균 |
+> |---|---|---|
+> | 13 | 0.695 | 0.610 |
+> | 15 | 0.474 | 0.475 |
+>
+> 28초와 15초 사이의 우열은 지금 데이터로 가릴 수 없으므로, 그 둘을 같은 배치에서 다시 만들어 보십시오.
+
+# 문장
+
+한국어로, 완성된 문장으로 답하십시오. 명사구로 문장을 끝내지 마십시오. 엠대시(—)는 앞뒤 관계를 지나치게 함축하므로 쓰지 말고, 쉼표나 접속사로 이으십시오.
 """
 
 
