@@ -135,7 +135,8 @@ MODEL_PREFERENCE = [
 ]
 DEFAULT_MODEL = MODEL_PREFERENCE[0]
 REQUEST_TIMEOUT = 90
-ATTEMPTS_PER_MODEL = 3          # 같은 모델에 몇 번까지 다시 물어볼지
+ATTEMPTS_FIRST = 2      # 처음 고른 모델에 몇 번까지 다시 물어볼지
+ATTEMPTS_FALLBACK = 1   # 대체 모델은 한 번씩만. 여러 개를 빠르게 훑는 편이 낫다
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 IMAGE_KEY = "gemini_chat_images"
 
@@ -186,23 +187,46 @@ def _tier_of(name):
     return m.group(2) if m else ""
 
 
-# 혼잡할 때 어느 등급으로 넘어갈지. 답이 아예 안 오는 것보다는 낫다는 이유로 무조건
-# 가벼운 쪽으로 내려가면, 판단이 섞인 질문에서 답의 질이 눈에 띄게 떨어진다. 그래서
-# Flash 가 막히면 Lite 가 아니라 Pro 를 먼저 시도한다.
+def _ver_of(name):
+    m = _MODEL_RE.match(name)
+    return float(m.group(1)) if m else -1.0
+
+
+# 등급을 갈아타야 할 때의 순서. 답이 아예 안 오는 것보다는 낫다는 이유로 무조건 가벼운
+# 쪽으로 내려가면, 판단이 섞인 질문에서 답의 질이 눈에 띄게 떨어진다. 그래서 Flash 가
+# 막히면 Lite 가 아니라 Pro 를 먼저 본다. 다만 이것은 마지막 수단이다 (아래 참조).
 FALLBACK_BY_TIER = {
     "flash": ["pro", "flash-lite"],
     "flash-lite": ["flash", "pro"],
     "pro": ["flash", "flash-lite"],
 }
 
+MAX_FALLBACKS = 3   # 한 질문에 대체 모델을 몇 개까지 시도할지
 
-def fallback_order(chosen, curated):
-    """혼잡할 때 넘어갈 순서."""
+
+def fallback_order(chosen, curated, all_names=()):
+    """혼잡할 때 넘어갈 순서.
+
+    **먼저 같은 등급의 한 세대 아래로 내려간다.** 3.8-flash 가 막히면 3.7 → 3.6 →
+    3.5-flash 순이다. 같은 계열의 이전 판은 성능과 값이 가장 가까운 대체재이므로,
+    등급을 갈아타는 것보다 사용자가 기대한 답에 가깝다. 목록에는 등급마다 최신판
+    하나만 보이지만, 대체용으로는 계정에 있는 이전 판들도 전부 쓴다.
+
+    같은 등급이 모두 막힌 뒤에야 다른 등급으로 넘어간다.
+    """
+    tier, ver = _tier_of(chosen), _ver_of(chosen)
+    siblings = sorted(
+        (n for n in all_names
+         if _MODEL_RE.match(n) and _tier_of(n) == tier and _ver_of(n) < ver),
+        key=_ver_of, reverse=True)
+
+    out = list(siblings)
     avail = {_tier_of(n): n for n, _ in curated if n != chosen}
-    want = FALLBACK_BY_TIER.get(_tier_of(chosen)) or FALLBACK_BY_TIER[DEFAULT_TIER]
-    out = [avail[t] for t in want if t in avail]
+    for t in (FALLBACK_BY_TIER.get(tier) or FALLBACK_BY_TIER[DEFAULT_TIER]):
+        if t in avail and avail[t] not in out:
+            out.append(avail[t])
     out += [n for n, _ in curated if n != chosen and n not in out]
-    return out
+    return out[:MAX_FALLBACKS]
 
 
 class GeminiError(RuntimeError):
@@ -320,7 +344,9 @@ def ask(api_key, model, history, context_md, images=None, alternates=()):
     for mi, m in enumerate(queue):
         url = f"{API_BASE}/models/{m}:generateContent"
         assert url.startswith(API_BASE)
-        for attempt in range(ATTEMPTS_PER_MODEL):
+        # 처음 고른 모델에는 몇 번 더 매달리고, 대체 모델은 한 번씩만 빠르게 훑는다.
+        attempts = ATTEMPTS_FIRST if mi == 0 else ATTEMPTS_FALLBACK
+        for attempt in range(attempts):
             try:
                 r = requests.post(url, headers=_headers(api_key), json=body,
                                   timeout=REQUEST_TIMEOUT)
@@ -330,7 +356,7 @@ def ask(api_key, model, history, context_md, images=None, alternates=()):
                 continue
             if r.status_code in RETRYABLE_STATUS:
                 last_msg = _friendly_error(r.status_code, secret_store.scrub(r.text, api_key))
-                if attempt + 1 < ATTEMPTS_PER_MODEL or mi + 1 < len(queue):
+                if attempt + 1 < attempts or mi + 1 < len(queue):
                     time.sleep(1.2 * (2 ** attempt))
                 continue
             if r.status_code >= 400:
@@ -568,8 +594,11 @@ def render_chat(config_vars, target_vars):
 
     if "gemini_model_list" not in st.session_state:
         try:
-            st.session_state.gemini_model_list = curate_models(list_models(api_key))
+            raw = list_models(api_key)
+            st.session_state.gemini_model_raw = raw          # 대체 모델을 고를 때 쓴다
+            st.session_state.gemini_model_list = curate_models(raw)
         except Exception as e:
+            st.session_state.gemini_model_raw = []
             st.session_state.gemini_model_list = []
             st.warning("모델 목록을 가져오지 못했습니다: " + secret_store.scrub(str(e)[:200], api_key))
     models = st.session_state.gemini_model_list
@@ -642,12 +671,14 @@ def render_chat(config_vars, target_vars):
     with st.chat_message("user"):
         st.markdown(shown)
     chosen = st.session_state.get(MODEL_KEY) or DEFAULT_MODEL
-    alts = fallback_order(chosen, models) or [m for m in MODEL_PREFERENCE if m != chosen][:1]
+    alts = fallback_order(chosen, models, st.session_state.get("gemini_model_raw", []))
+    if not alts:
+        alts = [m for m in MODEL_PREFERENCE if m != chosen][:1]
     with st.chat_message("assistant"):
         with st.spinner("생각 중... (혼잡하면 다시 시도합니다)"):
             try:
                 answer, used = ask(api_key, chosen, history, context_md,
-                                   images=imgs, alternates=alts[:1])
+                                   images=imgs, alternates=alts)
                 if used != chosen:
                     answer = f"*{chosen} 이 혼잡해 **{used}** 로 답했습니다.*\n\n" + answer
             except GeminiError as e:
