@@ -209,11 +209,22 @@ def render_data_manager(config_vars, target_vars, passive_vars):
                         help="큰 모니터에서는 높여서 화면을 더 활용하세요.")
 
     # ---------- 편집표 (넓게) ----------
-    edited = st.data_editor(
-        fdf, use_container_width=True, hide_index=True, height=table_h,
-        column_config={"학습_적용": st.column_config.CheckboxColumn("학습 적용")},
-    )
+    # st.form 으로 감싼다. 폼 안에서는 위젯을 건드려도 리런이 일어나지 않으므로, 체크박스를
+    # 여러 개 바꾼 뒤 '적용'을 한 번만 누르면 된다. (폼이 없으면 체크 한 번마다 전체 앱이
+    # 다시 그려져 — 분석 탭의 무거운 계산까지 — 한참 기다리게 된다.)
+    st.caption("체크를 여러 개 바꾼 뒤 아래 **적용** 버튼을 한 번만 누르세요. 누르기 전에는 계산에 반영되지 않습니다.")
+    with st.form("dm_editor_form", border=False):
+        edited = st.data_editor(
+            fdf, use_container_width=True, hide_index=True, height=table_h,
+            column_config={"학습_적용": st.column_config.CheckboxColumn("학습 적용")},
+        )
+        applied = st.form_submit_button("✅ 변경 사항 적용", type="primary", use_container_width=True)
+
     # 편집 내용을 원본에 인덱스로 되쓰기 (필터로 가려진 행은 그대로 보존)
-    if not edited.equals(fdf):
-        df.loc[edited.index, edited.columns] = edited
-        st.session_state.df_data = df
+    if applied:
+        if not edited.equals(fdf):
+            df.loc[edited.index, edited.columns] = edited
+            st.session_state.df_data = df
+            st.rerun()
+        else:
+            st.info("바뀐 내용이 없습니다.")
