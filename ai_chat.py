@@ -123,14 +123,14 @@ SECRET_NAME = "gemini_api_key"
 SESSION_KEY = "_gemini_key_plain"      # 복호화된 키가 잠시 머무는 자리 (위젯 key 아님)
 HISTORY_KEY = "gemini_chat_history"
 MODEL_KEY = "gemini_model_name"
-# 기본 모델. 목록은 API 에 물어서 채우지만, 그중 어느 것을 미리 골라 둘지는 정해 둔다.
-# 앞에 있는 것부터 찾아 실제로 쓸 수 있는 첫 번째를 고른다 — 모델이 물갈이되어 이름이
-# 사라져도 다음 것으로 자연스럽게 내려간다.
+# 목록을 못 가져왔을 때 쓰는 대비책. 앞에서부터 실제로 쓸 수 있는 첫 번째를 고르므로,
+# 모델이 물갈이되어 이름이 사라져도 다음 것으로 자연스럽게 내려간다. 평소에는 아래
+# curate_models 가 계정의 실제 목록에서 세 등급을 뽑아 오므로 이 목록은 쓰이지 않는다.
 MODEL_PREFERENCE = [
-    "gemini-3.5-flash",
-    "gemini-3.6-flash",
-    "gemini-3.7-flash",
     "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
     "gemini-2.5-flash",
 ]
 DEFAULT_MODEL = MODEL_PREFERENCE[0]
@@ -141,37 +141,61 @@ IMAGE_KEY = "gemini_chat_images"
 
 # 대화에 쓸 수 있는 모델만 남기는 규칙. 계정에 보이는 모델은 수십 개인데 그 대부분은
 # 이미지 생성·음성·임베딩처럼 여기서 쓸 일이 없는 것들이다. 모델을 잘 모르는 사람에게
-# 긴 목록은 도움이 아니라 부담이므로, 텍스트 대화용 Flash 와 Pro 만 남기고 그중에서도
-# 세 개 안쪽으로 줄인다. 이름 규칙으로 거르므로 새 모델이 나와도 따라간다.
-_MODEL_RE = re.compile(r"^gemini-(\d+(?:\.\d+)?)-(flash|pro)$")
+# 긴 목록은 도움이 아니라 부담이므로, 하나의 축 위에 세 등급만 놓는다.
+#
+#     빠르고 저렴  ←  Flash-Lite   ·   Flash(기본)   ·   Pro  →  똑똑하고 느림
+#
+# 등급마다 계정에 있는 것 중 가장 새 판을 뽑는다. 이름 규칙으로 거르므로 새 모델이
+# 나와도 그대로 따라가고, preview·exp 처럼 꼬리표가 붙은 것은 규칙에 걸려 빠진다.
+_MODEL_RE = re.compile(r"^gemini-(\d+(?:\.\d+)?)-(flash-lite|flash|pro)$")
+
+MODEL_TIERS = [
+    ("flash-lite", "가장 빠르고 저렴 · 간단한 확인용"),
+    ("flash", "균형 · 기본값"),
+    ("pro", "가장 똑똑함 · 느리고 비쌈"),
+]
+DEFAULT_TIER = "flash"
 
 
 def curate_models(names):
-    """쓸 만한 모델 두세 개만 골라 [(모델명, 화면에 보일 설명), ...] 로 돌려준다."""
-    cand = {}
+    """등급마다 가장 새 판 하나씩. [(모델명, 화면에 보일 설명), ...] 로 돌려준다."""
+    best = {}
     for n in names:
         m = _MODEL_RE.match(n)
-        if m:
-            cand[n] = (float(m.group(1)), m.group(2))
-    if not cand:
-        return [(n, "") for n in names[:5]]
+        if not m:
+            continue
+        ver, tier = float(m.group(1)), m.group(2)
+        if tier not in best or ver > best[tier][0]:
+            best[tier] = (ver, n)
+    out = [(best[t][1], note) for t, note in MODEL_TIERS if t in best]
+    return out or [(n, "") for n in names[:5]]
 
-    picked, out = [], []
 
-    def add(name, note):
-        if name and name not in picked:
-            picked.append(name)
-            out.append((name, note))
+def default_model(curated):
+    """기본으로 골라 둘 모델. 중간 등급(Flash)을 먼저 보고, 없으면 있는 것 중 첫째."""
+    if not curated:
+        return DEFAULT_MODEL
+    for name, note in curated:
+        if _tier_of(name) == DEFAULT_TIER:
+            return name
+    return curated[0][0]
 
-    add(next((m for m in MODEL_PREFERENCE if m in cand), None), "빠르고 저렴 · 기본값")
-    flashes = sorted((n for n, (v, k) in cand.items() if k == "flash"),
-                     key=lambda n: -cand[n][0])
-    if flashes:
-        add(flashes[0], "가장 새로운 Flash · 더 똑똑함")
-    pros = sorted((n for n, (v, k) in cand.items() if k == "pro"), key=lambda n: -cand[n][0])
-    if pros:
-        add(pros[0], "깊은 추론 · 느리고 비쌈")
-    return out
+
+def _tier_of(name):
+    m = _MODEL_RE.match(name)
+    return m.group(2) if m else ""
+
+
+def fallback_order(chosen, curated):
+    """혼잡할 때 넘어갈 순서. 고른 등급과 성격이 가까운 것부터 시도한다."""
+    order = [t for t, _ in MODEL_TIERS]
+    try:
+        here = order.index(_tier_of(chosen))
+    except ValueError:
+        here = order.index(DEFAULT_TIER)
+    rest = [n for n, _ in curated if n != chosen]
+    return sorted(rest, key=lambda n: abs(order.index(_tier_of(n)) - here)
+                  if _tier_of(n) in order else 99)
 
 
 class GeminiError(RuntimeError):
@@ -503,11 +527,12 @@ def render_chat(config_vars, target_vars):
     c1, c2 = st.columns([2, 1], vertical_alignment="bottom")
     if names:
         if MODEL_KEY not in st.session_state or st.session_state[MODEL_KEY] not in names:
-            st.session_state[MODEL_KEY] = next((m for m in MODEL_PREFERENCE if m in names), names[0])
+            st.session_state[MODEL_KEY] = default_model(models)
         c1.selectbox("모델", names, key=MODEL_KEY,
                      format_func=lambda n: f"{n} — {notes[n]}" if notes.get(n) else n,
-                     help="Flash 는 빠르고 저렴합니다. 답이 얕게 느껴지면 Pro 로 바꿔 보세요. "
-                          "그림을 읽는 것은 어느 쪽이든 됩니다.")
+                     help="왼쪽일수록 빠르고 싸며, 오른쪽일수록 똑똑하고 느립니다. "
+                          "간단한 확인은 Lite, 평소에는 Flash, 답이 얕게 느껴지면 Pro 로 바꿔 보세요. "
+                          "그림을 읽는 것은 세 등급 모두 됩니다.")
     else:
         c1.text_input("모델 이름", key=MODEL_KEY, placeholder=f"예: {DEFAULT_MODEL}")
     if c2.button("대화 비우기", key="nbedl_chat_clear", use_container_width=True):
@@ -568,7 +593,7 @@ def render_chat(config_vars, target_vars):
     with st.chat_message("user"):
         st.markdown(prompt)
     chosen = st.session_state.get(MODEL_KEY) or DEFAULT_MODEL
-    alts = [m for m in names if m != chosen] or [m for m in MODEL_PREFERENCE if m != chosen][:1]
+    alts = fallback_order(chosen, models) or [m for m in MODEL_PREFERENCE if m != chosen][:1]
     with st.chat_message("assistant"):
         with st.spinner("생각 중... (혼잡하면 다시 시도합니다)"):
             try:
