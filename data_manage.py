@@ -10,7 +10,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from analysis import desirability, direction_arrow, direction_label, target_direction
+from analysis import (desirability, desirability_scored, direction_arrow, direction_label,
+                      target_direction, COMPOSITE_MODES, composite_score)
 
 EDITOR_HEIGHT = 560
 
@@ -199,20 +200,28 @@ def render_composite_optimum(config_vars, target_vars, key_prefix="mobo", floors
         )
         return
 
-    # desirability 는 통과한 조건들 사이에서만 0~1 로 정규화한다 — 탈락한(사실상 죽은)
+    # 종합 방식: 목표들을 하나의 수로 어떻게 합칠지. 산술평균은 한 목표의 우수함이 다른
+    # 목표의 부진을 상쇄하므로, 두 모드가 함께 성립해야 하는 문제에서는 상충을 벌주지
+    # 못한다. 기본값을 기하평균으로 둔다.
+    mode = st.radio(
+        "종합 방식", [m[0] for m in COMPOSITE_MODES],
+        format_func=lambda k: dict(COMPOSITE_MODES)[k],
+        key=f"{key_prefix}_copt_mode", horizontal=False,
+        help="여러 목표를 하나의 점수로 합치는 방법입니다. 목표들이 서로를 대신할 수 있으면 "
+             "산술평균이 맞지만, 모든 목표가 동시에 성립해야 하면 기하평균이나 최솟값이 맞습니다.")
+
+    # desirability 는 통과한 조건들 사이에서만 0~1 로 매긴다 — 탈락한(사실상 죽은)
     # 조건이 척도의 양 끝을 차지해 살아 있는 조건들의 점수를 뭉개지 않게 하기 위함이다.
+    # 0점 기준은 최소 허용값(있으면) 또는 관측 범위를 조금 넓힌 지점으로 잡는다.
     score = pd.DataFrame(index=passed.index)
     for tv in sel_tvs:
-        score[tv["Name"]] = desirability(pd.to_numeric(passed[tv["Name"]], errors="coerce"), tv)
+        score[tv["Name"]] = desirability_scored(
+            passed[tv["Name"]], tv, floor=floors.get(tv["Name"]))
     cols = [tv["Name"] for tv in sel_tvs]
     w = np.array([weights[c] for c in cols], dtype=float)
     if w.sum() <= 0:
         w = np.ones(len(cols))
-    S = score[cols].to_numpy(dtype=float)
-    present = ~np.isnan(S)
-    wsum = np.where(present, w[np.newaxis, :], 0.0).sum(axis=1)
-    num = np.where(present, np.nan_to_num(S) * w[np.newaxis, :], 0.0).sum(axis=1)
-    comp = pd.Series(np.where(wsum > 0, num / np.where(wsum > 0, wsum, 1.0), np.nan),
+    comp = pd.Series(composite_score(score[cols].to_numpy(dtype=float), w, mode=mode),
                      index=passed.index)
     if comp.dropna().empty:
         return
@@ -281,8 +290,20 @@ def render_composite_optimum(config_vars, target_vars, key_prefix="mobo", floors
     st.dataframe(show, use_container_width=True, hide_index=True)
     st.caption(
         "목표값은 같은 조건의 반복 시료를 **중앙값**으로 묶은 대표값입니다(평균은 튀는 시료 하나에 끌려갑니다). "
-        "종합점수는 각 목표를 방향에 맞춰 0~1(최선=1)로 정규화한 desirability 의 가중평균입니다."
+        f"종합점수는 각 목표를 방향에 맞춰 0~1(최선=1)로 매긴 desirability 를 **{dict(COMPOSITE_MODES)[mode].split(' (')[0]}**으로 합친 값입니다. "
+        "0점 기준은 최소 허용값(설정했으면) 또는 관측 범위를 조금 넓힌 지점이라, 꼴찌 조건이 무조건 0점이 되지 않습니다."
     )
+    if mode == "arithmetic":
+        st.warning(
+            "⚠️ 산술평균은 **한 목표의 우수함이 다른 목표의 부진을 상쇄**합니다. "
+            "그래서 한쪽에서 1위를 쓸어 담고 다른 쪽에서 꼴찌인 조건이, 양쪽에서 2위인 조건을 이길 수 있습니다. "
+            "모든 목표가 **동시에** 성립해야 하는 문제라면 기하평균이나 최솟값을 쓰세요."
+        )
+    if len(cols) >= 4:
+        st.caption(
+            "💡 서로 강하게 상관된 목표를 여러 개 넣으면 그 축이 그만큼 여러 표를 행사합니다"
+            "(예: 인접 파장의 같은 바이어스 응답도). 물리적으로 독립인 목표만 남기는 편이 순위가 안정적입니다."
+        )
 
     n_drop = int((~ok).sum())
     if n_drop:

@@ -99,6 +99,79 @@ def desirability(col, tv):
     return 1.0 - norm if d == "Minimize" else norm
 
 
+def desirability_scored(col, tv, floor=None, pad=0.1):
+    """종합점수 전용 desirability. 그래프 정규화용 desirability() 와 두 가지가 다르다.
+
+    1) **0점 기준을 데이터 최솟값에 두지 않는다.** min-max 로 펴면 꼴찌 조건은 실제
+       차이가 5 % 든 500 % 든 무조건 0점이 된다. 0점이 하나라도 있으면 기하평균이
+       통째로 0이 되어 순위를 매길 수 없다. 그래서 '최소 허용값'이 있으면 그것을,
+       없으면 관측 범위를 pad 만큼 넓힌 지점을 0점으로 삼는다. 이는 하이퍼볼륨
+       기준점(ref_point)을 잡는 방식과 같은 철학이다.
+    2) **허용값 밖은 0 으로 자른다.** 최소 허용값에 미달한 값이 음수 점수로 남아
+       다른 목표의 점수를 갉아먹지 않게 한다.
+    """
+    d = target_direction(tv)
+    col = pd.to_numeric(col, errors="coerce")
+    lo, hi = col.min(), col.max()
+    if not np.isfinite(lo) or not np.isfinite(hi):
+        return pd.Series(np.nan, index=col.index)
+    rng = hi - lo
+    if rng == 0:
+        rng = abs(hi) if hi != 0 else 1.0
+    if d == "Target":
+        dev = (col - target_value_of(tv)).abs()
+        dmax = dev.max()
+        if not np.isfinite(dmax) or dmax == 0:
+            return pd.Series(1.0, index=col.index)
+        return (1.0 - dev / (dmax * (1.0 + pad))).clip(lower=0.0, upper=1.0)
+    if d == "Maximize":
+        zero = float(floor) if floor is not None else (lo - pad * rng)
+        top = max(hi, zero + 1e-12)
+        return ((col - zero) / (top - zero)).clip(lower=0.0, upper=1.0)
+    zero = float(floor) if floor is not None else (hi + pad * rng)   # Minimize: 이 값이 0점
+    bottom = min(lo, zero - 1e-12)
+    return ((zero - col) / (zero - bottom)).clip(lower=0.0, upper=1.0)
+
+
+# 종합점수를 만드는 방식. 여러 목표를 하나의 수로 합칠 때 무엇을 '좋다'고 볼지 정한다.
+COMPOSITE_MODES = [
+    ("geometric", "기하평균 (권장 · 모든 목표가 함께 성립해야 함)"),
+    ("arithmetic", "산술평균 (관대 · 한 목표의 우수함이 다른 목표의 부진을 상쇄)"),
+    ("minimum", "최솟값 (가장 엄격 · 가장 부진한 목표가 곧 점수)"),
+]
+_COMPOSITE_LABEL = dict(COMPOSITE_MODES)
+
+
+def composite_label(mode):
+    return _COMPOSITE_LABEL.get(mode, mode)
+
+
+def composite_score(S, w, mode="geometric", eps=0.01):
+    """조건 x 목표 desirability 행렬 S 와 가중치 w 를 하나의 종합점수로 합친다.
+
+    산술평균은 목표들이 서로를 대신할 수 있다고 가정한다. 그래서 한 모드에서 1위를
+    쓸어 담고 다른 모드에서 꼴찌인 조건이, 양쪽에서 2위인 조건을 이긴다. 두 모드가
+    **함께** 성립해야 하는 문제에서는 이 가정이 틀렸다. 기하평균은 한 목표가 0에
+    가까우면 전체가 0에 가까워지므로 상충을 실제로 벌준다(Derringer-Suich 의 원래
+    정의도 기하평균이다). NaN 목표는 그 행의 계산에서 빠진다.
+    """
+    S = np.asarray(S, dtype=float)
+    w = np.asarray(w, dtype=float)
+    present = ~np.isnan(S)
+    wm = np.where(present, w[np.newaxis, :], 0.0)
+    wsum = wm.sum(axis=1)
+    if mode == "minimum":
+        masked = np.where(present, S, np.inf)
+        out = masked.min(axis=1)
+        return np.where(np.isfinite(out), out, np.nan)
+    if mode == "geometric":
+        Sc = np.where(present, np.clip(S, eps, 1.0), 1.0)
+        ln = np.where(present, np.log(Sc), 0.0)
+        return np.where(wsum > 0, np.exp((ln * wm).sum(axis=1) / np.where(wsum > 0, wsum, 1.0)), np.nan)
+    num = np.where(present, np.nan_to_num(S) * wm, 0.0).sum(axis=1)
+    return np.where(wsum > 0, num / np.where(wsum > 0, wsum, 1.0), np.nan)
+
+
 MIN_GROUP = 3  # 이 개수 미만이면 이상치 판정 안 함 (통계적으로 무의미)
 
 # (key, 화면 라벨). 순서가 셀렉트박스 순서. "auto"는 데이터에 맞춰 아래 방법 중 하나를 자동 선택.
