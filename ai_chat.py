@@ -119,6 +119,17 @@ SECRET_NAME = "gemini_api_key"
 SESSION_KEY = "_gemini_key_plain"      # 복호화된 키가 잠시 머무는 자리 (위젯 key 아님)
 HISTORY_KEY = "gemini_chat_history"
 MODEL_KEY = "gemini_model_name"
+# 기본 모델. 목록은 API 에 물어서 채우지만, 그중 어느 것을 미리 골라 둘지는 정해 둔다.
+# 앞에 있는 것부터 찾아 실제로 쓸 수 있는 첫 번째를 고른다 — 모델이 물갈이되어 이름이
+# 사라져도 다음 것으로 자연스럽게 내려간다.
+MODEL_PREFERENCE = [
+    "gemini-3.5-flash",
+    "gemini-3.6-flash",
+    "gemini-3.7-flash",
+    "gemini-3.8-flash",
+    "gemini-2.5-flash",
+]
+DEFAULT_MODEL = MODEL_PREFERENCE[0]
 REQUEST_TIMEOUT = 90
 
 SYSTEM_PROMPT = """당신은 페로브스카이트/실리콘 듀얼모드 광검출기를 연구하는 대학원생의 실험 데이터 분석을 돕습니다.
@@ -393,10 +404,13 @@ def render_chat(config_vars, target_vars):
     models = st.session_state.gemini_model_list
     c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
     if models:
+        if MODEL_KEY not in st.session_state or st.session_state[MODEL_KEY] not in models:
+            st.session_state[MODEL_KEY] = next((m for m in MODEL_PREFERENCE if m in models), models[0])
         c1.selectbox("모델", models, key=MODEL_KEY,
-                     help="flash 계열이 빠르고 저렴합니다. 긴 추론이 필요하면 pro 계열을 쓰세요.")
+                     help="flash 계열이 빠르고 저렴합니다. 숫자가 클수록 새 모델이고, "
+                          "긴 추론이 필요하면 pro 계열을 쓰세요.")
     else:
-        c1.text_input("모델 이름", key=MODEL_KEY, placeholder="예: gemini-2.5-flash")
+        c1.text_input("모델 이름", key=MODEL_KEY, placeholder=f"예: {DEFAULT_MODEL}")
     if c2.button("🧹 대화 비우기", use_container_width=True):
         st.session_state[HISTORY_KEY] = []
         st.rerun()
@@ -434,7 +448,7 @@ def render_chat(config_vars, target_vars):
     with st.chat_message("assistant"):
         with st.spinner("생각 중..."):
             try:
-                answer = ask(api_key, st.session_state.get(MODEL_KEY) or "gemini-2.5-flash",
+                answer = ask(api_key, st.session_state.get(MODEL_KEY) or DEFAULT_MODEL,
                              history, context_md)
             except Exception as e:
                 answer = "요청에 실패했습니다: " + secret_store.scrub(str(e)[:500], api_key)
@@ -458,6 +472,17 @@ def render_chat(config_vars, target_vars):
 # 표식을 하나 심고, 자바스크립트로 그 표식의 조상을 찾아 클래스를 붙인다. 리런 때마다
 # DOM 이 갈리므로 MutationObserver 로 다시 붙인다.
 
+# ---------------------------------------------------------------------------
+# 마스코트
+# ---------------------------------------------------------------------------
+# 이모지는 글꼴에 따라 모양이 달라지고 크기를 키워도 존재감이 없다. 말풍선이자 로봇
+# 얼굴인 도형을 직접 그려 두면 어느 환경에서나 같은 모양으로, 원하는 크기로 나온다.
+# 선만으로 그렸으므로 작은 크기에서도 뭉개지지 않는다. 색은 두 벌만 둔다 — 주황 단추
+# 위에 얹는 흰색, 밝은 바탕에 놓는 주황색.
+
+MASCOT_WHITE = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZyBmaWxsPSJub25lIiBzdHJva2U9IiNmZmZmZmYiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj4KICAgIDxwYXRoIGQ9Ik0yNCA2IFYxMCIvPgogICAgPHJlY3QgeD0iNC44IiB5PSIxMCIgd2lkdGg9IjM4LjQiIGhlaWdodD0iMjQuNSIgcng9IjguNSIvPgogICAgPHBhdGggZD0iTTE4LjYgMjUuMiBxNS40IDQuOCAxMC44IDAiLz4KICA8L2c+CiAgPHBhdGggZD0iTTE0LjggMzMuNiBoOS42IGwtOS42IDEwIHoiIGZpbGw9IiNmZmZmZmYiIHN0cm9rZT0iI2ZmZmZmZiIgc3Ryb2tlLXdpZHRoPSIyLjQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8Y2lyY2xlIGN4PSIyNCIgY3k9IjMuOSIgcj0iMi45IiBmaWxsPSIjZmZmZmZmIi8+CiAgPGNpcmNsZSBjeD0iMTguMiIgY3k9IjE5LjIiIHI9IjMiIGZpbGw9IiNmZmZmZmYiLz4KICA8Y2lyY2xlIGN4PSIyOS44IiBjeT0iMTkuMiIgcj0iMyIgZmlsbD0iI2ZmZmZmZiIvPgo8L3N2Zz4="
+MASCOT_ORANGE = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZyBmaWxsPSJub25lIiBzdHJva2U9IiNlZDU0MmIiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj4KICAgIDxwYXRoIGQ9Ik0yNCA2IFYxMCIvPgogICAgPHJlY3QgeD0iNC44IiB5PSIxMCIgd2lkdGg9IjM4LjQiIGhlaWdodD0iMjQuNSIgcng9IjguNSIvPgogICAgPHBhdGggZD0iTTE4LjYgMjUuMiBxNS40IDQuOCAxMC44IDAiLz4KICA8L2c+CiAgPHBhdGggZD0iTTE0LjggMzMuNiBoOS42IGwtOS42IDEwIHoiIGZpbGw9IiNlZDU0MmIiIHN0cm9rZT0iI2VkNTQyYiIgc3Ryb2tlLXdpZHRoPSIyLjQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8Y2lyY2xlIGN4PSIyNCIgY3k9IjMuOSIgcj0iMi45IiBmaWxsPSIjZWQ1NDJiIi8+CiAgPGNpcmNsZSBjeD0iMTguMiIgY3k9IjE5LjIiIHI9IjMiIGZpbGw9IiNlZDU0MmIiLz4KICA8Y2lyY2xlIGN4PSIyOS44IiBjeT0iMTkuMiIgcj0iMyIgZmlsbD0iI2VkNTQyYiIvPgo8L3N2Zz4="
+
 CHAT_ANCHOR_ID = "nbedl-chat-anchor"
 OPEN_KEY = "nbedl_chat_open"
 
@@ -470,24 +495,41 @@ _CHAT_CSS = """
     if (!st) { st = doc.createElement('style'); st.id = ID; doc.head.appendChild(st); }
     st.textContent = [
       /* 떠 있는 창 자체 */
-      '.nbedl-chat-panel{position:fixed !important;left:18px;bottom:18px;z-index:9990;',
+      '.nbedl-chat-panel{position:fixed !important;left:20px;bottom:20px;z-index:9990;',
       '  width:auto !important;}',
-      '.nbedl-chat-panel[data-open="1"]{width:min(460px,calc(100vw - 40px)) !important;',
+      '.nbedl-chat-panel[data-open="1"]{width:min(470px,calc(100vw - 40px)) !important;',
       '  max-height:min(78vh,780px);overflow-y:auto;overflow-x:hidden;',
       '  background:var(--background-color,#ffffff);',
-      '  border:1px solid rgba(49,51,63,.18);border-radius:16px;',
-      '  box-shadow:0 12px 44px rgba(0,0,0,.20);padding:14px 16px 10px;}',
-      /* 닫혀 있을 때는 동그란 단추 하나만 */
-      '.nbedl-chat-panel[data-open="0"] .stButton>button{width:58px;height:58px;',
-      '  border-radius:50%;padding:0;font-size:24px;line-height:1;',
-      '  box-shadow:0 6px 22px rgba(0,0,0,.28);}',
-      '.nbedl-chat-panel .stButton>button{margin:0;}',
+      '  border:1px solid rgba(49,51,63,.18);border-radius:18px;',
+      '  box-shadow:0 14px 48px rgba(0,0,0,.22);padding:14px 16px 10px;}',
+
+      /* 닫혀 있을 때 = 알약 모양 단추. 이모지 대신 직접 그린 마스코트를 왼쪽에 얹는다. */
+      '.nbedl-chat-panel[data-open="0"] .stButton>button{',
+      '  height:62px;padding:0 26px 0 68px;border-radius:31px;border:none !important;',
+      '  background-image:url("%MASCOT%"),linear-gradient(135deg,#ed542b,#f68b21) !important;',
+      '  background-repeat:no-repeat,no-repeat;',
+      '  background-position:18px center,center;',
+      '  background-size:38px 38px,100% 100%;',
+      '  color:#fff !important;font-size:1.02rem;font-weight:800;letter-spacing:.01em;',
+      '  white-space:nowrap;transition:transform .16s ease, box-shadow .16s ease;',
+      '  animation:nbedlChatPulse 2.6s ease-out 4;}',
+      '.nbedl-chat-panel[data-open="0"] .stButton>button:hover{',
+      '  transform:translateY(-2px) scale(1.03);animation:none;',
+      '  box-shadow:0 12px 34px rgba(237,84,43,.5) !important;}',
+      '.nbedl-chat-panel[data-open="0"] .stButton>button p{',
+      '  font-size:1.02rem !important;font-weight:800 !important;color:#fff !important;}',
+      /* 처음 몇 번만 파문이 퍼진다. 계속 움직이면 곧 거슬린다. */
+      '@keyframes nbedlChatPulse{',
+      '  0%{box-shadow:0 8px 26px rgba(0,0,0,.26),0 0 0 0 rgba(237,84,43,.55);}',
+      '  70%{box-shadow:0 8px 26px rgba(0,0,0,.26),0 0 0 18px rgba(237,84,43,0);}',
+      '  100%{box-shadow:0 8px 26px rgba(0,0,0,.26),0 0 0 0 rgba(237,84,43,0);}}',
+
       /* 창 안은 여백을 죄어 좁은 폭에서도 읽히게 */
-      '.nbedl-chat-panel [data-testid="stVerticalBlock"]{gap:.45rem;}',
+      '.nbedl-chat-panel[data-open="1"] [data-testid="stVerticalBlock"]{gap:.45rem;}',
       '.nbedl-chat-panel .stChatMessage{padding:.4rem .6rem;}',
       '.nbedl-chat-panel p,.nbedl-chat-panel li{font-size:.88rem;}',
       /* 단추가 본문 마지막 줄을 가리지 않도록 아래 여백 */
-      '[data-testid="stMain"] .block-container{padding-bottom:110px;}'
+      '[data-testid="stMain"] .block-container{padding-bottom:120px;}'
     ].join('');
 
     var mark = function() {
@@ -524,9 +566,11 @@ def render_floating_chat(config_vars, target_vars):
         if is_open:
             head, shut = st.columns([5, 1], vertical_alignment="center")
             head.markdown(
-                "<div style='font-weight:800;font-size:1rem;'>💬 분석 도우미</div>"
-                "<div style='font-size:.74rem;opacity:.6;line-height:1.25;'>"
-                "숫자는 앱이 계산해 표로 건네고, 모델은 해석만 합니다.</div>",
+                "<div style='display:flex;align-items:center;gap:9px;'>"
+                f"<img src='{MASCOT_ORANGE}' width='30' height='30' alt=''>"
+                "<div><div style='font-weight:800;font-size:1.02rem;line-height:1.2;'>분석 도우미</div>"
+                "<div style='font-size:.73rem;opacity:.6;line-height:1.25;'>"
+                "숫자는 앱이 계산해 표로 건네고, 모델은 해석만 합니다.</div></div></div>",
                 unsafe_allow_html=True)
             if shut.button("✕", key="nbedl_chat_close", help="닫기"):
                 st.session_state[OPEN_KEY] = False
@@ -534,7 +578,9 @@ def render_floating_chat(config_vars, target_vars):
             st.divider()
             render_chat(config_vars, target_vars)
         else:
-            if st.button("💬", key="nbedl_chat_open_btn", help="분석 도우미 열기"):
+            if st.button("분석 도우미에게 물어보기", key="nbedl_chat_open_btn",
+                         help="지금 화면의 데이터를 놓고 대화합니다"):
                 st.session_state[OPEN_KEY] = True
                 st.rerun()
-    inject_html(_CHAT_CSS.replace("%ANCHOR%", CHAT_ANCHOR_ID))
+    inject_html(_CHAT_CSS.replace("%ANCHOR%", CHAT_ANCHOR_ID)
+                         .replace("%MASCOT%", MASCOT_WHITE))
