@@ -31,6 +31,21 @@ import secret_store
 from analysis import target_direction, direction_label
 
 
+
+def inject_html(snippet, height=0):
+    """<style>·<script> 를 페이지에 주입한다.
+
+    Streamlit 은 st.markdown 에서 <script> 를 제거하므로 components.html(0 높이 iframe)을
+    써 왔다. 그런데 그 API 는 폐기 예고가 붙어 있어 언젠가 사라진다. 사라진 날 앱 전체가
+    죽지 않도록, 없으면 st.html 로 넘어간다. 주입하는 스크립트는 window.parent.document 를
+    쓰는데, 인라인으로 실행될 때는 window.parent 가 자기 자신이라 그대로 동작한다.
+    """
+    fn = getattr(components, "html", None)
+    if fn is not None:
+        return fn(snippet, height=height)
+    return st.html(snippet, unsafe_allow_javascript=True)
+
+
 def running_locally():
     """이 앱이 사용자 본인의 컴퓨터에서 돌고 있는지. 판단이 서지 않으면 '아니오'로 본다.
 
@@ -53,14 +68,17 @@ def _password_manager_hints():
     그 속성이 없으면 브라우저의 비밀번호 관리자가 그 칸을 비밀번호로 인식하지 못한다.
     부모 문서에 직접 손대는 방식은 이 앱이 이미 Enter 가로채기와 화면 축소에 쓰고 있다.
     """
-    components.html("""
+    inject_html("""
 <script>
 (function() {
   try {
     var doc = window.parent.document;
     var apply = function() {
-      var box = doc.querySelector('[data-nbedl-keyform="1"]');
-      var forms = doc.querySelectorAll('[data-testid="stForm"]');
+      // 이 앱의 다른 폼까지 건드리지 않도록, 떠 있는 창 안쪽으로만 범위를 좁힌다.
+      var root = doc.getElementById('nbedl-chat-anchor');
+      var scope = root ? root.closest('[data-testid="stVerticalBlock"]') : null;
+      if (!scope) return;
+      var forms = scope.querySelectorAll('[data-testid="stForm"]');
       forms.forEach(function(f) {
         var pw = f.querySelector('input[type="password"]');
         if (!pw || pw.dataset.nbedlHinted) return;
@@ -519,4 +537,4 @@ def render_floating_chat(config_vars, target_vars):
             if st.button("💬", key="nbedl_chat_open_btn", help="분석 도우미 열기"):
                 st.session_state[OPEN_KEY] = True
                 st.rerun()
-    components.html(_CHAT_CSS.replace("%ANCHOR%", CHAT_ANCHOR_ID), height=0)
+    inject_html(_CHAT_CSS.replace("%ANCHOR%", CHAT_ANCHOR_ID))

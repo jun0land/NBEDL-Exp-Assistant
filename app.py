@@ -16,6 +16,21 @@ import streamlit.components.v1 as components
 _HEADER_COLORS = {"orange-70": "#ed542b", "green-70": "#2f9e44", "blue-70": "#1c7ed6", "violet-70": "#7048e8"}
 
 
+
+def inject_html(snippet, height=0):
+    """<style>·<script> 를 페이지에 주입한다.
+
+    Streamlit 은 st.markdown 에서 <script> 를 제거하므로 components.html(0 높이 iframe)을
+    써 왔다. 그런데 그 API 는 폐기 예고가 붙어 있어 언젠가 사라진다. 사라진 날 앱 전체가
+    죽지 않도록, 없으면 st.html 로 넘어간다. 주입하는 스크립트는 window.parent.document 를
+    쓰는데, 인라인으로 실행될 때는 window.parent 가 자기 자신이라 그대로 동작한다.
+    """
+    fn = getattr(components, "html", None)
+    if fn is not None:
+        return fn(snippet, height=height)
+    return st.html(snippet, unsafe_allow_javascript=True)
+
+
 def colored_header(label, description="", color_name="orange-70"):
     rule = _HEADER_COLORS.get(color_name, "#ed542b")
     import streamlit as _st
@@ -78,12 +93,15 @@ except ImportError:
 # ==========================================
 st.set_page_config(page_title="NBEDL Exp Assistant", layout="wide")
 
-components.html(
+inject_html(
     """
     <script>
     window.onbeforeunload = function() { return "데이터가 저장되지 않았을 수 있습니다."; };
+    // 실험값 입력칸에 브라우저가 옛 입력을 자동완성으로 들이미는 것을 막는다.
+    // 다만 분석 도우미의 API 키 칸은 예외다 — 그 칸은 반대로 브라우저의 비밀번호
+    // 관리자가 기억해 주기를 바라는 칸이라, 여기서 덮어쓰면 저장 자체가 막힌다.
     setInterval(function() {
-        var inputs = document.querySelectorAll('input');
+        var inputs = document.querySelectorAll('input:not([data-nbedl-hinted]):not([name^="nbedl-"])');
         inputs.forEach(function(input) {
             input.setAttribute('autocomplete', 'new-password');
         });
@@ -580,13 +598,13 @@ def render_side_drawer(root_id, *, top_css, grad_a, grad_b, accent, bookmark_lab
     payload = (payload.replace("__ROOTID__", root_id).replace("__CSS__", css)
                .replace("__LABEL__", bookmark_label).replace("__TITLE__", panel_title)
                .replace("__CONTENT__", content_html))
-    components.html(payload, height=0)
+    inject_html(payload)
 
 
 def disable_form_enter_submit():
     """입력 폼(st.form) 안에서 Enter가 폼을 제출(데이터 추가)하지 않도록 막는다.
     값은 입력칸에 그대로 남고, 추가는 '데이터 추가' 버튼으로만 수행된다."""
-    components.html("""
+    inject_html("""
 <script>
 (function() {
   try {
@@ -625,7 +643,7 @@ def apply_ui_zoom():
     충돌한다(zoom은 vh를 보정하지 않아 부모보다 커져 화면이 위로 밀림). 그래서 vh 의존이
     없는 콘텐츠 컨테이너와 드로어에만 적용한다.
     또한 인라인 스타일은 리런 시 DOM이 교체되며 사라지므로 <style> 규칙으로 주입한다."""
-    components.html("""
+    inject_html("""
 <script>
 (function() {
   try {
@@ -1768,4 +1786,18 @@ elif st.session_state.app_mode == "Dashboard":
     # ---- 떠 있는 분석 도우미 ----
     # 탭 안이 아니라 탭 밖에서 한 번만 그린다. 어느 탭을 보고 있든 화면 왼쪽 아래에
     # 같은 자리로 떠 있어야 하고, 두 번 그리면 같은 위젯 키가 겹쳐 죽는다.
-    ai_chat.render_floating_chat(st.session_state.config_vars, st.session_state.target_vars)
+    #
+    # 이 창이 실패해도 데이터 화면까지 같이 죽어서는 안 된다. 특히 Streamlit Cloud 는
+    # 배포 직후 메인 스크립트만 새로 읽고 임포트된 모듈은 옛 것을 그대로 쓰는 경우가
+    # 있어서, 방금 추가한 함수가 아직 없는 상태로 실행될 수 있다. 그때는 앱 전체가
+    # 죽는 대신 재시작하라고 알린다.
+    _floating = getattr(ai_chat, "render_floating_chat", None)
+    if _floating is None:
+        st.caption("💬 분석 도우미를 아직 불러오지 못했습니다 — 앱을 한 번 재시작해 주세요 "
+                   "(Streamlit Cloud: 오른쪽 아래 **Manage app → ⋮ → Reboot app**).")
+    else:
+        try:
+            _floating(st.session_state.config_vars, st.session_state.target_vars)
+        except Exception as _chat_err:  # noqa: BLE001 - 도우미 하나 때문에 앱을 죽이지 않는다
+            with st.expander("💬 분석 도우미를 여는 중 오류가 났습니다 (데이터 화면은 정상입니다)"):
+                st.exception(_chat_err)
