@@ -668,10 +668,13 @@ def render_chat(config_vars, target_vars):
         st.code(context_md, language="markdown")
         _render_key_panel(compact=False, inner=True)
 
+    # 대화 기록만 따로 감싼다. 이 상자 하나만 스크롤되고 머리글·모델 줄·입력창은
+    # 제자리에 붙어 있어야 한다. key 를 주면 st-key-<key> 클래스가 붙어 CSS 로 짚을 수 있다.
     history = st.session_state.setdefault(HISTORY_KEY, [])
-    for h in history:
-        with st.chat_message(h["role"]):
-            st.markdown(h["content"])
+    with st.container(key="nbedl_chat_log"):
+        for h in history:
+            with st.chat_message(h["role"]):
+                st.markdown(h["content"])
 
     # 그림 첨부는 입력창 안의 클립으로. 따로 칸을 두면 대화도 시작하기 전에 자리를 먹는다.
     prompt, files = None, []
@@ -705,15 +708,16 @@ def render_chat(config_vars, target_vars):
 
     shown = prompt + (f"\n\n*🖼 그림 {len(imgs)}장 첨부*" if imgs else "")
     history.append({"role": "user", "content": shown})
-    with st.chat_message("user"):
+    log = st.container(key="nbedl_chat_log_new")
+    with log, st.chat_message("user"):
         st.markdown(shown)
     chosen = st.session_state.get(MODEL_KEY) or DEFAULT_MODEL
     raw_all = [n for n in st.session_state.get("gemini_model_raw", []) if n not in dead]
     alts = [a for a in fallback_order(chosen, models, raw_all) if a not in dead]
     if not alts:
         alts = [m for m in MODEL_PREFERENCE if m != chosen and m not in dead][:1]
-    with st.chat_message("assistant"):
-        with st.spinner("생각 중... (혼잡하면 다시 시도합니다)"):
+    with log, st.chat_message("assistant"):
+        with st.spinner("생각 중... (응답이 없으면 다른 모델로 넘어갑니다)"):
             newly_dead = []
             try:
                 answer, used = ask(api_key, chosen, history, context_md,
@@ -766,12 +770,37 @@ _CHAT_CSS = """
       '.nbedl-chat-panel{position:fixed !important;bottom:20px;z-index:9990;',
       '  left:var(--nbedl-chat-left,20px);width:auto !important;',
       '  transition:left .2s ease;}',
+      /* 창 전체가 함께 스크롤되면 입력창과 닫기 단추까지 위로 밀려 올라간다.
+         그래서 창은 스크롤하지 않고(overflow:hidden), 안의 '대화 기록' 상자 하나만
+         스크롤하게 한다. 창 높이는 내용에 따라 늘었다가 상한에서 멈춘다. */
       '.nbedl-chat-panel[data-open="1"]{',
-      '  width:min(470px,calc(100vw - var(--nbedl-chat-left,20px) - 20px)) !important;',
-      '  max-height:min(78vh,780px);overflow-y:auto;overflow-x:hidden;',
+      '  width:min(500px,calc(100vw - var(--nbedl-chat-left,20px) - 20px)) !important;',
+      '  max-height:min(80vh,820px);overflow:hidden;',
+      '  display:flex !important;flex-direction:column !important;',
       '  background:var(--background-color,#ffffff);',
       '  border:1px solid rgba(49,51,63,.18);border-radius:18px;',
       '  box-shadow:0 14px 48px rgba(0,0,0,.22);padding:14px 16px 10px;}',
+      /* 머리글·모델 줄·설정·입력창은 줄어들지 않게 못 박는다 */
+      '.nbedl-chat-panel[data-open="1"]>*{flex:0 0 auto;}',
+      /* 대화 기록만 남는 공간을 차지하며 스크롤한다.
+         flex 자식은 min-height 기본값이 auto 라 내용만큼 늘어나 버린다. 0 으로 눌러야
+         상한을 지키고 그 안에서 스크롤이 생긴다. */
+      /* 기록 상자는 Streamlit 래퍼 안에 들어 있어 창의 직계 자식이 아니다. 그래서
+         래퍼 쪽에 자바스크립트로 표식을 붙이고, 그 래퍼를 늘어나는 칸으로 삼는다. */
+      '.nbedl-chat-panel[data-open="1"]>.nbedl-chat-logwrap{',
+      '  flex:1 1 auto !important;min-height:0 !important;display:flex !important;',
+      '  flex-direction:column !important;overflow:hidden !important;}',
+      '.st-key-nbedl_chat_log,.st-key-nbedl_chat_log_new{',
+      '  flex:1 1 auto !important;min-height:0 !important;',
+      '  overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;padding-right:2px;}',
+      /* 표는 좁은 창에서 잘리므로 표만 따로 가로 스크롤한다 */
+      '.nbedl-chat-panel [data-testid="stMarkdown"] table{',
+      '  display:block;width:max-content;max-width:100%;overflow-x:auto;',
+      '  font-size:.8rem;scrollbar-width:thin;}',
+      '.nbedl-chat-panel [data-testid="stMarkdown"] table th,',
+      '.nbedl-chat-panel [data-testid="stMarkdown"] table td{',
+      '  white-space:nowrap;padding:.25rem .5rem;}',
+      '.nbedl-chat-panel [data-testid="stMarkdown"] pre{overflow-x:auto;font-size:.76rem;}',
 
       /* 닫혀 있을 때 = 알약 모양 단추. 이모지 대신 직접 그린 마스코트를 왼쪽에 얹는다.
          help 툴팁이 단추를 span 으로 한 겹 더 감싸므로 자식(>)이 아니라 자손으로 짚는다. */
@@ -858,6 +887,16 @@ _CHAT_CSS = """
       });
       block.classList.add('nbedl-chat-panel');
       block.setAttribute('data-open', a.dataset.open || '0');
+
+      // 대화 기록 상자를 감싼 래퍼를 찾아, 그 래퍼가 창의 남는 높이를 차지하게 한다.
+      block.querySelectorAll(':scope > .nbedl-chat-logwrap')
+           .forEach(function(el) { el.classList.remove('nbedl-chat-logwrap'); });
+      var log = block.querySelector('.st-key-nbedl_chat_log, .st-key-nbedl_chat_log_new');
+      if (log) {
+        var w = log;
+        while (w && w.parentElement !== block) w = w.parentElement;
+        if (w) w.classList.add('nbedl-chat-logwrap');
+      }
       place();
     };
     mark();
