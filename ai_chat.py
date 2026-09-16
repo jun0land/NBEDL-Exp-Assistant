@@ -274,7 +274,16 @@ def render_chat(config_vars, target_vars):
         with st.chat_message(h["role"]):
             st.markdown(h["content"])
 
-    prompt = st.chat_input("데이터에 대해 물어보세요")
+    # st.chat_input 은 버전에 따라 컨테이너 안에서 거부될 수 있다. 그럴 때는 일반
+    # 입력창으로 조용히 내려앉아, 스트림릿 버전 때문에 탭 전체가 죽지 않게 한다.
+    try:
+        prompt = st.chat_input("데이터에 대해 물어보세요")
+    except Exception:
+        with st.form("gemini_ask", border=False, clear_on_submit=True):
+            prompt = st.text_input("질문", label_visibility="collapsed",
+                                   placeholder="데이터에 대해 물어보세요")
+            if not st.form_submit_button("보내기", type="primary"):
+                prompt = None
     if not prompt:
         return
     history.append({"role": "user", "content": prompt})
