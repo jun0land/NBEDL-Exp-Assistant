@@ -138,7 +138,12 @@ REQUEST_TIMEOUT = 90
 ATTEMPTS_FIRST = 2      # 처음 고른 모델에 몇 번까지 다시 물어볼지
 ATTEMPTS_FALLBACK = 1   # 대체 모델은 한 번씩만. 여러 개를 빠르게 훑는 편이 낫다
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+# 이 상태는 다시 물어도 같은 답이 오지만, **그 모델에만 해당하는** 문제다. 요청 전체를
+# 접지 말고 다음 모델로 넘어가야 한다. 404 는 모델이 사라졌거나 이 계정에 열려 있지
+# 않다는 뜻이고, 403 은 이 키로 그 모델을 쓸 수 없다는 뜻이다.
+MODEL_DEAD_STATUS = {403, 404}
 IMAGE_KEY = "gemini_chat_images"
+DEAD_KEY = "gemini_dead_models"   # 404·403 으로 쓸 수 없다고 판명된 모델
 
 # 대화에 쓸 수 있는 모델만 남기는 규칙. 계정에 보이는 모델은 수십 개인데 그 대부분은
 # 이미지 생성·음성·임베딩처럼 여기서 쓸 일이 없는 것들이다. 모델을 잘 모르는 사람에게
@@ -148,7 +153,15 @@ IMAGE_KEY = "gemini_chat_images"
 #
 # 등급마다 계정에 있는 것 중 가장 새 판을 뽑는다. 이름 규칙으로 거르므로 새 모델이
 # 나와도 그대로 따라가고, preview·exp 처럼 꼬리표가 붙은 것은 규칙에 걸려 빠진다.
-_MODEL_RE = re.compile(r"^gemini-(\d+(?:\.\d+)?)-(flash-lite|flash|pro)$")
+# 정식판만 받으면 등급이 통째로 비는 일이 생긴다. 실제로 Pro 는 계정에 따라
+# gemini-3.1-pro-preview 만 열려 있고 이전 정식판(2.5-pro)은 신규 사용자에게 막혀 있다.
+# 그래서 미리보기도 후보로 받되, 같은 판 번호면 정식판을 앞에 둔다.
+_MODEL_RE = re.compile(r"^gemini-(\d+(?:\.\d+)?)-(flash-lite|flash|pro)(-preview)?$")
+
+
+def _is_preview(name):
+    m = _MODEL_RE.match(name)
+    return bool(m and m.group(3))
 
 MODEL_TIERS = [
     ("flash-lite", "가장 빠르고 저렴 · 간단한 확인용"),
@@ -158,18 +171,29 @@ MODEL_TIERS = [
 DEFAULT_TIER = "flash"
 
 
-def curate_models(names):
-    """등급마다 가장 새 판 하나씩. [(모델명, 화면에 보일 설명), ...] 로 돌려준다."""
+def curate_models(names, dead=()):
+    """등급마다 가장 새 판 하나씩. [(모델명, 화면에 보일 설명), ...] 로 돌려준다.
+
+    dead 에 담긴 모델(404·403 으로 쓸 수 없다고 판명된 것)은 후보에서 뺀다.
+    """
     best = {}
     for n in names:
+        if n in dead:
+            continue
         m = _MODEL_RE.match(n)
         if not m:
             continue
         ver, tier = float(m.group(1)), m.group(2)
-        if tier not in best or ver > best[tier][0]:
-            best[tier] = (ver, n)
-    out = [(best[t][1], note) for t, note in MODEL_TIERS if t in best]
-    return out or [(n, "") for n in names[:5]]
+        # 판 번호가 크면 이기고, 같으면 정식판이 미리보기를 이긴다.
+        rank = (ver, 0 if m.group(3) else 1)
+        if tier not in best or rank > best[tier][0]:
+            best[tier] = (rank, n)
+    out = []
+    for t, note in MODEL_TIERS:
+        if t in best:
+            n = best[t][1]
+            out.append((n, note + (" · 미리보기" if _is_preview(n) else "")))
+    return out or [(n, "") for n in names[:5] if n not in dead]
 
 
 def default_model(curated):
@@ -241,8 +265,11 @@ def _friendly_error(status, text):
     if status in (500, 502, 503, 504):
         return ("지금 이 모델에 요청이 몰려 있습니다(%d). 잠시 뒤 다시 시도하시거나 "
                 "위에서 다른 모델을 골라 보세요." % status)
+    if status == 404:
+        return ("이 모델은 계정에서 쓸 수 없습니다(404). 이미 내려갔거나 신규 사용자에게 "
+                "열려 있지 않은 모델입니다. 목록에서 빼고 다른 모델로 넘어갑니다.")
     if status == 403:
-        return "이 키로는 해당 모델을 쓸 수 없습니다(403). 키 권한이나 모델 이름을 확인해 주세요."
+        return "이 키로는 해당 모델을 쓸 수 없습니다(403). 목록에서 빼고 다른 모델로 넘어갑니다."
     if status == 400 and "API_KEY" in t.upper():
         return "API 키가 올바르지 않습니다(400). 키를 다시 등록해 주세요."
     return f"요청이 거부되었습니다({status}). {t}"
@@ -313,7 +340,7 @@ def list_models(api_key):
     return out
 
 
-def ask(api_key, model, history, context_md, images=None, alternates=()):
+def ask(api_key, model, history, context_md, images=None, alternates=(), dead_out=None):
     """한 번 물어보고 답을 돌려준다. (답, 실제로 답한 모델) 을 반환한다.
 
     Gemini 는 수요가 몰리면 503 을 돌려준다. 그것은 잘못 쓴 것이 아니라 잠시 기다리면
@@ -322,6 +349,9 @@ def ask(api_key, model, history, context_md, images=None, alternates=()):
 
     images 는 [(mime, base64), ...] 이며 마지막 사용자 발화에 붙는다. Gemini 는 그림을
     읽을 수 있으므로, 그래프나 화면을 캡처해 넣으면 표와 함께 보고 답한다.
+
+    dead_out 에 리스트를 주면, 쓸 수 없다고 판명된 모델 이름이 거기 담긴다. 호출한
+    쪽에서 목록과 대체 순서에서 빼 두면 같은 실패를 되풀이하지 않는다.
     """
     contents = []
     last = len(history) - 1
@@ -341,6 +371,7 @@ def ask(api_key, model, history, context_md, images=None, alternates=()):
 
     queue = [model] + [m for m in alternates if m != model]
     last_msg = "알 수 없는 오류"
+    dead = [] if dead_out is None else dead_out
     for mi, m in enumerate(queue):
         url = f"{API_BASE}/models/{m}:generateContent"
         assert url.startswith(API_BASE)
@@ -359,8 +390,13 @@ def ask(api_key, model, history, context_md, images=None, alternates=()):
                 if attempt + 1 < attempts or mi + 1 < len(queue):
                     time.sleep(1.2 * (2 ** attempt))
                 continue
+            if r.status_code in MODEL_DEAD_STATUS:
+                # 그 모델만의 문제다. 기록해 두고 다음 모델로 넘어간다.
+                last_msg = _friendly_error(r.status_code, secret_store.scrub(r.text, api_key))
+                dead.append(m)
+                break
             if r.status_code >= 400:
-                # 재시도해도 달라지지 않는 오류(키·권한·요청 형식)는 바로 알린다.
+                # 키나 요청 형식의 문제라면 어느 모델로 바꿔도 같으므로 바로 알린다.
                 raise GeminiError(_friendly_error(r.status_code, secret_store.scrub(r.text, api_key)))
             data = r.json()
             cands = data.get("candidates") or []
@@ -592,11 +628,12 @@ def render_chat(config_vars, target_vars):
     if not api_key:
         return
 
+    dead = st.session_state.setdefault(DEAD_KEY, [])
     if "gemini_model_list" not in st.session_state:
         try:
             raw = list_models(api_key)
             st.session_state.gemini_model_raw = raw          # 대체 모델을 고를 때 쓴다
-            st.session_state.gemini_model_list = curate_models(raw)
+            st.session_state.gemini_model_list = curate_models(raw, dead)
         except Exception as e:
             st.session_state.gemini_model_raw = []
             st.session_state.gemini_model_list = []
@@ -671,20 +708,28 @@ def render_chat(config_vars, target_vars):
     with st.chat_message("user"):
         st.markdown(shown)
     chosen = st.session_state.get(MODEL_KEY) or DEFAULT_MODEL
-    alts = fallback_order(chosen, models, st.session_state.get("gemini_model_raw", []))
+    raw_all = [n for n in st.session_state.get("gemini_model_raw", []) if n not in dead]
+    alts = [a for a in fallback_order(chosen, models, raw_all) if a not in dead]
     if not alts:
-        alts = [m for m in MODEL_PREFERENCE if m != chosen][:1]
+        alts = [m for m in MODEL_PREFERENCE if m != chosen and m not in dead][:1]
     with st.chat_message("assistant"):
         with st.spinner("생각 중... (혼잡하면 다시 시도합니다)"):
+            newly_dead = []
             try:
                 answer, used = ask(api_key, chosen, history, context_md,
-                                   images=imgs, alternates=alts)
+                                   images=imgs, alternates=alts, dead_out=newly_dead)
                 if used != chosen:
-                    answer = f"*{chosen} 이 혼잡해 **{used}** 로 답했습니다.*\n\n" + answer
+                    answer = f"*{chosen} 이 응답하지 않아 **{used}** 로 답했습니다.*\n\n" + answer
             except GeminiError as e:
                 answer = str(e)
             except Exception as e:
                 answer = "요청에 실패했습니다: " + secret_store.scrub(str(e)[:400], api_key)
+            # 쓸 수 없다고 판명된 모델은 목록에서 빼 둔다. 다음 질문부터는 시도조차 안 한다.
+            if newly_dead:
+                dead.extend(n for n in newly_dead if n not in dead)
+                st.session_state.gemini_model_list = curate_models(
+                    st.session_state.get("gemini_model_raw", []), dead)
+                st.session_state.pop(MODEL_KEY, None)
         st.markdown(answer)
     history.append({"role": "assistant", "content": answer})
 
