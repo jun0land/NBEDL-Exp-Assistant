@@ -27,7 +27,6 @@ def colored_header(label, description="", color_name="orange-70"):
     )
 
 
-from streamlit_extras.metric_cards import style_metric_cards
 from origin_charts import render_variable_charts
 from data_manage import (render_data_manager, render_summary, render_target_selectors,
                          render_composite_optimum)
