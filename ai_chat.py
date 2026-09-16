@@ -21,6 +21,10 @@
 
 from __future__ import annotations
 
+import base64
+import re
+import time
+
 import numpy as np
 import pandas as pd
 import requests
@@ -131,6 +135,62 @@ MODEL_PREFERENCE = [
 ]
 DEFAULT_MODEL = MODEL_PREFERENCE[0]
 REQUEST_TIMEOUT = 90
+ATTEMPTS_PER_MODEL = 2          # 같은 모델에 몇 번까지 다시 물어볼지
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+IMAGE_KEY = "gemini_chat_images"
+
+# 대화에 쓸 수 있는 모델만 남기는 규칙. 계정에 보이는 모델은 수십 개인데 그 대부분은
+# 이미지 생성·음성·임베딩처럼 여기서 쓸 일이 없는 것들이다. 모델을 잘 모르는 사람에게
+# 긴 목록은 도움이 아니라 부담이므로, 텍스트 대화용 Flash 와 Pro 만 남기고 그중에서도
+# 세 개 안쪽으로 줄인다. 이름 규칙으로 거르므로 새 모델이 나와도 따라간다.
+_MODEL_RE = re.compile(r"^gemini-(\d+(?:\.\d+)?)-(flash|pro)$")
+
+
+def curate_models(names):
+    """쓸 만한 모델 두세 개만 골라 [(모델명, 화면에 보일 설명), ...] 로 돌려준다."""
+    cand = {}
+    for n in names:
+        m = _MODEL_RE.match(n)
+        if m:
+            cand[n] = (float(m.group(1)), m.group(2))
+    if not cand:
+        return [(n, "") for n in names[:5]]
+
+    picked, out = [], []
+
+    def add(name, note):
+        if name and name not in picked:
+            picked.append(name)
+            out.append((name, note))
+
+    add(next((m for m in MODEL_PREFERENCE if m in cand), None), "빠르고 저렴 · 기본값")
+    flashes = sorted((n for n, (v, k) in cand.items() if k == "flash"),
+                     key=lambda n: -cand[n][0])
+    if flashes:
+        add(flashes[0], "가장 새로운 Flash · 더 똑똑함")
+    pros = sorted((n for n, (v, k) in cand.items() if k == "pro"), key=lambda n: -cand[n][0])
+    if pros:
+        add(pros[0], "깊은 추론 · 느리고 비쌈")
+    return out
+
+
+class GeminiError(RuntimeError):
+    """사람이 읽을 수 있게 다듬은 API 오류."""
+
+
+def _friendly_error(status, text):
+    t = (text or "")[:400]
+    if status in (429,):
+        return ("요청 한도를 넘었습니다(429). 잠시 뒤 다시 시도하시거나, "
+                "Google AI Studio 에서 이 키의 한도를 확인해 주세요.")
+    if status in (500, 502, 503, 504):
+        return ("지금 이 모델에 요청이 몰려 있습니다(%d). 잠시 뒤 다시 시도하시거나 "
+                "위에서 다른 모델을 골라 보세요." % status)
+    if status == 403:
+        return "이 키로는 해당 모델을 쓸 수 없습니다(403). 키 권한이나 모델 이름을 확인해 주세요."
+    if status == 400 and "API_KEY" in t.upper():
+        return "API 키가 올바르지 않습니다(400). 키를 다시 등록해 주세요."
+    return f"요청이 거부되었습니다({status}). {t}"
 
 SYSTEM_PROMPT = """당신은 페로브스카이트/실리콘 듀얼모드 광검출기를 연구하는 대학원생의 실험 데이터 분석을 돕습니다.
 
@@ -167,27 +227,62 @@ def list_models(api_key):
     return out
 
 
-def ask(api_key, model, history, context_md):
-    """history 는 [{'role': 'user'|'assistant', 'content': str}, ...]."""
-    contents = [{"role": "user" if h["role"] == "user" else "model",
-                 "parts": [{"text": h["content"]}]} for h in history]
+def ask(api_key, model, history, context_md, images=None, alternates=()):
+    """한 번 물어보고 답을 돌려준다. (답, 실제로 답한 모델) 을 반환한다.
+
+    Gemini 는 수요가 몰리면 503 을 돌려준다. 그것은 잘못 쓴 것이 아니라 잠시 기다리면
+    풀리는 상태이므로, 같은 모델에 두 번까지 다시 묻고 그래도 안 되면 대체 모델로
+    넘어간다. 사용자에게 오류를 그대로 던지기 전에 할 수 있는 것을 먼저 해 본다.
+
+    images 는 [(mime, base64), ...] 이며 마지막 사용자 발화에 붙는다. Gemini 는 그림을
+    읽을 수 있으므로, 그래프나 화면을 캡처해 넣으면 표와 함께 보고 답한다.
+    """
+    contents = []
+    last = len(history) - 1
+    for i, h in enumerate(history):
+        role = "user" if h["role"] == "user" else "model"
+        parts = [{"text": h["content"]}]
+        if images and role == "user" and i == last:
+            for mime, data in images:
+                parts.append({"inline_data": {"mime_type": mime, "data": data}})
+        contents.append({"role": role, "parts": parts})
+
     body = {
         "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT + "\n\n# 지금 화면의 데이터\n\n" + context_md}]},
         "contents": contents,
         "generationConfig": {"temperature": 0.2},
     }
-    url = f"{API_BASE}/models/{model}:generateContent"
-    assert url.startswith(API_BASE)
-    r = requests.post(url, headers=_headers(api_key), json=body, timeout=REQUEST_TIMEOUT)
-    if r.status_code >= 400:
-        raise RuntimeError(secret_store.scrub(f"{r.status_code} {r.text[:400]}", api_key))
-    data = r.json()
-    cands = data.get("candidates") or []
-    if not cands:
-        fb = data.get("promptFeedback", {})
-        raise RuntimeError(f"응답이 비어 있습니다. {fb}")
-    parts = cands[0].get("content", {}).get("parts") or []
-    return "".join(p.get("text", "") for p in parts).strip() or "(빈 응답)"
+
+    queue = [model] + [m for m in alternates if m != model]
+    last_msg = "알 수 없는 오류"
+    for mi, m in enumerate(queue):
+        url = f"{API_BASE}/models/{m}:generateContent"
+        assert url.startswith(API_BASE)
+        for attempt in range(ATTEMPTS_PER_MODEL):
+            try:
+                r = requests.post(url, headers=_headers(api_key), json=body,
+                                  timeout=REQUEST_TIMEOUT)
+            except requests.RequestException as e:
+                last_msg = f"연결하지 못했습니다: {type(e).__name__}"
+                time.sleep(1.2 * (attempt + 1))
+                continue
+            if r.status_code in RETRYABLE_STATUS:
+                last_msg = _friendly_error(r.status_code, secret_store.scrub(r.text, api_key))
+                if attempt + 1 < ATTEMPTS_PER_MODEL or mi + 1 < len(queue):
+                    time.sleep(1.2 * (2 ** attempt))
+                continue
+            if r.status_code >= 400:
+                # 재시도해도 달라지지 않는 오류(키·권한·요청 형식)는 바로 알린다.
+                raise GeminiError(_friendly_error(r.status_code, secret_store.scrub(r.text, api_key)))
+            data = r.json()
+            cands = data.get("candidates") or []
+            if not cands:
+                fb = data.get("promptFeedback", {})
+                raise GeminiError(f"응답이 비어 있습니다. 안전 필터에 걸렸을 수 있습니다. {fb}")
+            parts = cands[0].get("content", {}).get("parts") or []
+            text = "".join(p.get("text", "") for p in parts).strip()
+            return (text or "(빈 응답)"), m
+    raise GeminiError(last_msg)
 
 
 # ---------------------------------------------------------------------------
@@ -391,31 +486,58 @@ def render_chat(config_vars, target_vars):
     _render_key_panel()
     api_key = st.session_state.get(SESSION_KEY)
     if not api_key:
-        st.info("키를 등록하고 잠금을 해제하면 지금 화면의 데이터를 놓고 대화할 수 있습니다.")
+        st.info("키를 등록하면 지금 화면의 데이터를 놓고 대화할 수 있습니다.")
         return
 
-    # 모델 목록은 API 에 물어서 채운다. 모델명이 바뀌어도 코드를 고칠 필요가 없다.
+    # 모델 목록은 API 에 물어서 채우되, 대화에 쓸 만한 것만 추린다.
     if "gemini_model_list" not in st.session_state:
         try:
-            st.session_state.gemini_model_list = list_models(api_key)
+            st.session_state.gemini_model_list = curate_models(list_models(api_key))
         except Exception as e:
             st.session_state.gemini_model_list = []
             st.warning("모델 목록을 가져오지 못했습니다: " + secret_store.scrub(str(e)[:200], api_key))
     models = st.session_state.gemini_model_list
-    c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
-    if models:
-        if MODEL_KEY not in st.session_state or st.session_state[MODEL_KEY] not in models:
-            st.session_state[MODEL_KEY] = next((m for m in MODEL_PREFERENCE if m in models), models[0])
-        c1.selectbox("모델", models, key=MODEL_KEY,
-                     help="flash 계열이 빠르고 저렴합니다. 숫자가 클수록 새 모델이고, "
-                          "긴 추론이 필요하면 pro 계열을 쓰세요.")
+    names = [m for m, _ in models]
+    notes = dict(models)
+
+    c1, c2 = st.columns([2, 1], vertical_alignment="bottom")
+    if names:
+        if MODEL_KEY not in st.session_state or st.session_state[MODEL_KEY] not in names:
+            st.session_state[MODEL_KEY] = next((m for m in MODEL_PREFERENCE if m in names), names[0])
+        c1.selectbox("모델", names, key=MODEL_KEY,
+                     format_func=lambda n: f"{n} — {notes[n]}" if notes.get(n) else n,
+                     help="Flash 는 빠르고 저렴합니다. 답이 얕게 느껴지면 Pro 로 바꿔 보세요. "
+                          "그림을 읽는 것은 어느 쪽이든 됩니다.")
     else:
         c1.text_input("모델 이름", key=MODEL_KEY, placeholder=f"예: {DEFAULT_MODEL}")
-    if c2.button("🧹 대화 비우기", use_container_width=True):
+    if c2.button("대화 비우기", key="nbedl_chat_clear", use_container_width=True):
         st.session_state[HISTORY_KEY] = []
+        st.session_state.pop(IMAGE_KEY, None)
         st.rerun()
 
     context_md = build_context(config_vars, target_vars)
+
+    with st.expander("📎 그림 첨부 — 그래프·현미경 사진·화면 캡처"):
+        st.caption(
+            "도우미는 **이 앱의 화면을 직접 보지는 못합니다.** 표로 정리된 숫자만 전달받습니다.  \n"
+            "그래프의 모양이나 사진에 대해 물으시려면 그 그림을 여기에 넣어 주세요. "
+            "Gemini 는 그림을 읽을 수 있어서, 표와 그림을 함께 놓고 답합니다.  \n"
+            "그래프는 **📊 공정 변수별 분포**에서 PNG 로 내보낸 뒤 올리시면 됩니다."
+        )
+        ups = st.file_uploader("그림 파일", type=["png", "jpg", "jpeg", "webp"],
+                               accept_multiple_files=True, key="nbedl_chat_upload",
+                               label_visibility="collapsed")
+    imgs = []
+    if ups:
+        for f in ups[:4]:                       # 너무 많이 붙이면 요청이 무거워진다
+            raw = f.getvalue()
+            if len(raw) > 6 * 1024 * 1024:
+                st.warning(f"{f.name} 은 6 MB 를 넘어 건너뜁니다.")
+                continue
+            imgs.append((f.type or "image/png", base64.b64encode(raw).decode()))
+        if imgs:
+            st.caption(f"🖼 그림 {len(imgs)}장이 다음 질문과 함께 전달됩니다.")
+
     with st.expander("📋 모델에게 함께 보내는 데이터 (직접 확인)"):
         st.caption("이 내용만 전송됩니다. 원자료 전체가 아니라 조건별로 집계된 표입니다.")
         st.code(context_md, language="markdown")
@@ -445,32 +567,22 @@ def render_chat(config_vars, target_vars):
     history.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
+    chosen = st.session_state.get(MODEL_KEY) or DEFAULT_MODEL
+    alts = [m for m in names if m != chosen] or [m for m in MODEL_PREFERENCE if m != chosen][:1]
     with st.chat_message("assistant"):
-        with st.spinner("생각 중..."):
+        with st.spinner("생각 중... (혼잡하면 다시 시도합니다)"):
             try:
-                answer = ask(api_key, st.session_state.get(MODEL_KEY) or DEFAULT_MODEL,
-                             history, context_md)
+                answer, used = ask(api_key, chosen, history, context_md,
+                                   images=imgs, alternates=alts[:1])
+                if used != chosen:
+                    answer = f"*{chosen} 이 혼잡해 **{used}** 로 답했습니다.*\n\n" + answer
+            except GeminiError as e:
+                answer = str(e)
             except Exception as e:
-                answer = "요청에 실패했습니다: " + secret_store.scrub(str(e)[:500], api_key)
+                answer = "요청에 실패했습니다: " + secret_store.scrub(str(e)[:400], api_key)
         st.markdown(answer)
     history.append({"role": "assistant", "content": answer})
 
-
-# ---------------------------------------------------------------------------
-# 떠 있는 채팅창 (좌측 하단)
-# ---------------------------------------------------------------------------
-# 탭 하나를 통째로 쓰면 데이터를 보면서 물어볼 수가 없다. 그래서 화면 왼쪽 아래에
-# 동그란 단추로 떠 있다가, 누르면 그 자리에서 펼쳐지도록 한다. 오른쪽 아래는
-# Streamlit 자체 메뉴가 쓰므로 왼쪽이다.
-#
-# 매뉴얼 서랍과 달리 **뒤를 흐리지 않는다.** 이 창은 데이터를 가리려고 여는 것이
-# 아니라 데이터를 보면서 쓰려고 여는 것이므로, 뒤가 읽혀야 한다. 그래서 덮개(backdrop)를
-# 두지 않고, 창이 차지하는 사각형 밖은 그대로 클릭된다.
-#
-# 위치 지정은 CSS 한 줄로 끝나지 않는다. Streamlit 의 DOM 구조(감싸는 div 의 깊이)는
-# 버전마다 달라서 :has() 선택자로 조상을 짚으면 쉽게 깨진다. 그래서 눈에 보이지 않는
-# 표식을 하나 심고, 자바스크립트로 그 표식의 조상을 찾아 클래스를 붙인다. 리런 때마다
-# DOM 이 갈리므로 MutationObserver 로 다시 붙인다.
 
 # ---------------------------------------------------------------------------
 # 마스코트
@@ -480,8 +592,10 @@ def render_chat(config_vars, target_vars):
 # 선만으로 그렸으므로 작은 크기에서도 뭉개지지 않는다. 색은 두 벌만 둔다 — 주황 단추
 # 위에 얹는 흰색, 밝은 바탕에 놓는 주황색.
 
-MASCOT_WHITE = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZyBmaWxsPSJub25lIiBzdHJva2U9IiNmZmZmZmYiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj4KICAgIDxwYXRoIGQ9Ik0yNCA2IFYxMCIvPgogICAgPHJlY3QgeD0iNC44IiB5PSIxMCIgd2lkdGg9IjM4LjQiIGhlaWdodD0iMjQuNSIgcng9IjguNSIvPgogICAgPHBhdGggZD0iTTE4LjYgMjUuMiBxNS40IDQuOCAxMC44IDAiLz4KICA8L2c+CiAgPHBhdGggZD0iTTE0LjggMzMuNiBoOS42IGwtOS42IDEwIHoiIGZpbGw9IiNmZmZmZmYiIHN0cm9rZT0iI2ZmZmZmZiIgc3Ryb2tlLXdpZHRoPSIyLjQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8Y2lyY2xlIGN4PSIyNCIgY3k9IjMuOSIgcj0iMi45IiBmaWxsPSIjZmZmZmZmIi8+CiAgPGNpcmNsZSBjeD0iMTguMiIgY3k9IjE5LjIiIHI9IjMiIGZpbGw9IiNmZmZmZmYiLz4KICA8Y2lyY2xlIGN4PSIyOS44IiBjeT0iMTkuMiIgcj0iMyIgZmlsbD0iI2ZmZmZmZiIvPgo8L3N2Zz4="
-MASCOT_ORANGE = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8ZyBmaWxsPSJub25lIiBzdHJva2U9IiNlZDU0MmIiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj4KICAgIDxwYXRoIGQ9Ik0yNCA2IFYxMCIvPgogICAgPHJlY3QgeD0iNC44IiB5PSIxMCIgd2lkdGg9IjM4LjQiIGhlaWdodD0iMjQuNSIgcng9IjguNSIvPgogICAgPHBhdGggZD0iTTE4LjYgMjUuMiBxNS40IDQuOCAxMC44IDAiLz4KICA8L2c+CiAgPHBhdGggZD0iTTE0LjggMzMuNiBoOS42IGwtOS42IDEwIHoiIGZpbGw9IiNlZDU0MmIiIHN0cm9rZT0iI2VkNTQyYiIgc3Ryb2tlLXdpZHRoPSIyLjQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8Y2lyY2xlIGN4PSIyNCIgY3k9IjMuOSIgcj0iMi45IiBmaWxsPSIjZWQ1NDJiIi8+CiAgPGNpcmNsZSBjeD0iMTguMiIgY3k9IjE5LjIiIHI9IjMiIGZpbGw9IiNlZDU0MmIiLz4KICA8Y2lyY2xlIGN4PSIyOS44IiBjeT0iMTkuMiIgcj0iMyIgZmlsbD0iI2VkNTQyYiIvPgo8L3N2Zz4="
+# 꼬리 삼각형의 윗변은 말풍선 아래 선(y=34.5)에 정확히 맞추고 테두리를 주지 않는다.
+# 조금이라도 위로 올리거나 테두리를 두면 그 선을 넘어 얼굴 안쪽으로 삐져나온다.
+MASCOT_WHITE = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cGF0aCBkPSJNMTUgMzQuNSBoOSBsLTkgOSB6IiBmaWxsPSIjZmZmZmZmIi8+CiAgPGcgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utd2lkdGg9IjMiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cGF0aCBkPSJNMjQgNiBWMTAiLz4KICAgIDxyZWN0IHg9IjQuOCIgeT0iMTAiIHdpZHRoPSIzOC40IiBoZWlnaHQ9IjI0LjUiIHJ4PSI4LjUiLz4KICAgIDxwYXRoIGQ9Ik0xOC42IDI1LjIgcTUuNCA0LjggMTAuOCAwIi8+CiAgPC9nPgogIDxjaXJjbGUgY3g9IjI0IiBjeT0iMy45IiByPSIyLjkiIGZpbGw9IiNmZmZmZmYiLz4KICA8Y2lyY2xlIGN4PSIxOC4yIiBjeT0iMTkuMiIgcj0iMyIgZmlsbD0iI2ZmZmZmZiIvPgogIDxjaXJjbGUgY3g9IjI5LjgiIGN5PSIxOS4yIiByPSIzIiBmaWxsPSIjZmZmZmZmIi8+Cjwvc3ZnPg=="
+MASCOT_ORANGE = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCIgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4Ij4KICA8cGF0aCBkPSJNMTUgMzQuNSBoOSBsLTkgOSB6IiBmaWxsPSIjZWQ1NDJiIi8+CiAgPGcgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZWQ1NDJiIiBzdHJva2Utd2lkdGg9IjMiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CiAgICA8cGF0aCBkPSJNMjQgNiBWMTAiLz4KICAgIDxyZWN0IHg9IjQuOCIgeT0iMTAiIHdpZHRoPSIzOC40IiBoZWlnaHQ9IjI0LjUiIHJ4PSI4LjUiLz4KICAgIDxwYXRoIGQ9Ik0xOC42IDI1LjIgcTUuNCA0LjggMTAuOCAwIi8+CiAgPC9nPgogIDxjaXJjbGUgY3g9IjI0IiBjeT0iMy45IiByPSIyLjkiIGZpbGw9IiNlZDU0MmIiLz4KICA8Y2lyY2xlIGN4PSIxOC4yIiBjeT0iMTkuMiIgcj0iMyIgZmlsbD0iI2VkNTQyYiIvPgogIDxjaXJjbGUgY3g9IjI5LjgiIGN5PSIxOS4yIiByPSIzIiBmaWxsPSIjZWQ1NDJiIi8+Cjwvc3ZnPg=="
 
 CHAT_ANCHOR_ID = "nbedl-chat-anchor"
 OPEN_KEY = "nbedl_chat_open"
