@@ -378,7 +378,14 @@ MANUAL_HTML = """
   <li><b>공정 변수별 그래프</b> — 표시 배율·정규화·추세선 조절, <b>PNG(투명)·JPG·CSV</b>로 내보내기(출판용 960×768)</li>
 </ul>
 
-<div class="nbedl-step">STEP 6. 저장 &amp; 관리 <span class="nbedl-loc">· 왼쪽 사이드바</span></div>
+<div class="nbedl-step">STEP 6. 물어보기 <span class="nbedl-loc">· 화면 왼쪽 아래 💬 단추</span></div>
+<ul>
+  <li>어느 탭에서든 왼쪽 아래 <b>💬</b>를 누르면 <b>분석 도우미</b>가 그 자리에서 펼쳐집니다. 뒤 화면을 가리거나 흐리지 않으므로 <b>데이터를 보면서</b> 물어볼 수 있습니다.</li>
+  <li><b>본인 Gemini API 키</b>가 필요합니다(Google AI Studio에서 무료 발급). 키는 <b>브라우저 세션에만</b> 머물고 서버나 Excel에 저장되지 않습니다 — 크롬의 비밀번호 저장 기능을 쓰면 다음부터 자동으로 채워집니다. <b>개인 키이므로 남과 공유하지 마세요.</b></li>
+  <li>숫자는 <b>앱이 미리 계산해 표로 건네고</b> 모델은 해석만 합니다. 조건별 중앙값·평균·반복 수, 목표 정의와 최소 허용값, 직전 AI 계산 결과가 함께 전달되며, <b>무엇이 전달되는지 직접 열어 확인</b>할 수 있습니다.</li>
+</ul>
+
+<div class="nbedl-step">STEP 7. 저장 &amp; 관리 <span class="nbedl-loc">· 왼쪽 사이드바</span></div>
 <ul>
   <li><b>"📥 최신 데이터 Excel 다운로드"</b>로 저장 → STEP 1에서 다시 올리면 이어서 작업(이상치 설정 포함 복원)</li>
   <li>"🛠️ 환경 설정으로 돌아가기" / "⚠️ 모든 데이터 초기화"</li>
@@ -1322,7 +1329,7 @@ elif st.session_state.app_mode == "Dashboard":
             st.session_state.clear()
             st.rerun()
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 신규 실험 입력", "🗂️ 데이터베이스 관리", "🔬 데이터 진단", "🤖 AI 최적화 대시보드", "💬 분석 도우미"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📝 신규 실험 입력", "🗂️ 데이터베이스 관리", "🔬 데이터 진단", "🤖 AI 최적화 대시보드"])
 
     with tab1:
         with st.container(border=True):
@@ -1758,10 +1765,7 @@ elif st.session_state.app_mode == "Dashboard":
                            color_name="blue-70")
             valid_df_charts = st.session_state.df_data[st.session_state.df_data["학습_적용"] == True]
             render_variable_charts(valid_df_charts, st.session_state.config_vars, st.session_state.target_vars, key_prefix=_chart_prefix)
-    with tab5:
-        with st.container(border=True):
-            colored_header(
-                label="💬 분석 도우미 (Gemini)",
-                description="지금 화면의 데이터를 놓고 대화합니다. 숫자는 이 앱이 미리 계산해 표로 건네고, 모델은 해석만 합니다 — 언어 모델에게 원자료를 주고 평균을 내라고 시키면 틀린 수를 자신 있게 말하기 때문입니다.",
-                color_name="violet-70")
-            ai_chat.render_chat(st.session_state.config_vars, st.session_state.target_vars)
+    # ---- 떠 있는 분석 도우미 ----
+    # 탭 안이 아니라 탭 밖에서 한 번만 그린다. 어느 탭을 보고 있든 화면 왼쪽 아래에
+    # 같은 자리로 떠 있어야 하고, 두 번 그리면 같은 위젯 키가 겹쳐 죽는다.
+    ai_chat.render_floating_chat(st.session_state.config_vars, st.session_state.target_vars)

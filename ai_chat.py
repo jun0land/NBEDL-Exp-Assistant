@@ -422,3 +422,101 @@ def render_chat(config_vars, target_vars):
                 answer = "요청에 실패했습니다: " + secret_store.scrub(str(e)[:500], api_key)
         st.markdown(answer)
     history.append({"role": "assistant", "content": answer})
+
+
+# ---------------------------------------------------------------------------
+# 떠 있는 채팅창 (좌측 하단)
+# ---------------------------------------------------------------------------
+# 탭 하나를 통째로 쓰면 데이터를 보면서 물어볼 수가 없다. 그래서 화면 왼쪽 아래에
+# 동그란 단추로 떠 있다가, 누르면 그 자리에서 펼쳐지도록 한다. 오른쪽 아래는
+# Streamlit 자체 메뉴가 쓰므로 왼쪽이다.
+#
+# 매뉴얼 서랍과 달리 **뒤를 흐리지 않는다.** 이 창은 데이터를 가리려고 여는 것이
+# 아니라 데이터를 보면서 쓰려고 여는 것이므로, 뒤가 읽혀야 한다. 그래서 덮개(backdrop)를
+# 두지 않고, 창이 차지하는 사각형 밖은 그대로 클릭된다.
+#
+# 위치 지정은 CSS 한 줄로 끝나지 않는다. Streamlit 의 DOM 구조(감싸는 div 의 깊이)는
+# 버전마다 달라서 :has() 선택자로 조상을 짚으면 쉽게 깨진다. 그래서 눈에 보이지 않는
+# 표식을 하나 심고, 자바스크립트로 그 표식의 조상을 찾아 클래스를 붙인다. 리런 때마다
+# DOM 이 갈리므로 MutationObserver 로 다시 붙인다.
+
+CHAT_ANCHOR_ID = "nbedl-chat-anchor"
+OPEN_KEY = "nbedl_chat_open"
+
+_CHAT_CSS = """
+<script>
+(function() {
+  try {
+    var doc = window.parent.document, ID = 'nbedl-chat-style';
+    var st = doc.getElementById(ID);
+    if (!st) { st = doc.createElement('style'); st.id = ID; doc.head.appendChild(st); }
+    st.textContent = [
+      /* 떠 있는 창 자체 */
+      '.nbedl-chat-panel{position:fixed !important;left:18px;bottom:18px;z-index:9990;',
+      '  width:auto !important;}',
+      '.nbedl-chat-panel[data-open="1"]{width:min(460px,calc(100vw - 40px)) !important;',
+      '  max-height:min(78vh,780px);overflow-y:auto;overflow-x:hidden;',
+      '  background:var(--background-color,#ffffff);',
+      '  border:1px solid rgba(49,51,63,.18);border-radius:16px;',
+      '  box-shadow:0 12px 44px rgba(0,0,0,.20);padding:14px 16px 10px;}',
+      /* 닫혀 있을 때는 동그란 단추 하나만 */
+      '.nbedl-chat-panel[data-open="0"] .stButton>button{width:58px;height:58px;',
+      '  border-radius:50%;padding:0;font-size:24px;line-height:1;',
+      '  box-shadow:0 6px 22px rgba(0,0,0,.28);}',
+      '.nbedl-chat-panel .stButton>button{margin:0;}',
+      /* 창 안은 여백을 죄어 좁은 폭에서도 읽히게 */
+      '.nbedl-chat-panel [data-testid="stVerticalBlock"]{gap:.45rem;}',
+      '.nbedl-chat-panel .stChatMessage{padding:.4rem .6rem;}',
+      '.nbedl-chat-panel p,.nbedl-chat-panel li{font-size:.88rem;}',
+      /* 단추가 본문 마지막 줄을 가리지 않도록 아래 여백 */
+      '[data-testid="stMain"] .block-container{padding-bottom:110px;}'
+    ].join('');
+
+    var mark = function() {
+      var a = doc.getElementById('%ANCHOR%');
+      if (!a) return;
+      var block = a.closest('[data-testid="stVerticalBlock"]');
+      if (!block) return;
+      doc.querySelectorAll('.nbedl-chat-panel').forEach(function(el) {
+        if (el !== block) el.classList.remove('nbedl-chat-panel');
+      });
+      block.classList.add('nbedl-chat-panel');
+      block.setAttribute('data-open', a.dataset.open || '0');
+    };
+    mark();
+    if (!window.parent.__nbedlChatObs) {
+      window.parent.__nbedlChatObs = new window.parent.MutationObserver(mark);
+      window.parent.__nbedlChatObs.observe(doc.body, {childList: true, subtree: true});
+    }
+  } catch (err) { /* 무시 */ }
+})();
+</script>
+"""
+
+
+def render_floating_chat(config_vars, target_vars):
+    """화면 왼쪽 아래에 떠 있는 분석 도우미. 탭 밖에서 한 번만 호출한다."""
+    is_open = bool(st.session_state.get(OPEN_KEY, False))
+    box = st.container()
+    with box:
+        st.markdown(
+            f'<div id="{CHAT_ANCHOR_ID}" data-open="{"1" if is_open else "0"}" '
+            f'style="height:0;overflow:hidden;"></div>',
+            unsafe_allow_html=True)
+        if is_open:
+            head, shut = st.columns([5, 1], vertical_alignment="center")
+            head.markdown(
+                "<div style='font-weight:800;font-size:1rem;'>💬 분석 도우미</div>"
+                "<div style='font-size:.74rem;opacity:.6;line-height:1.25;'>"
+                "숫자는 앱이 계산해 표로 건네고, 모델은 해석만 합니다.</div>",
+                unsafe_allow_html=True)
+            if shut.button("✕", key="nbedl_chat_close", help="닫기"):
+                st.session_state[OPEN_KEY] = False
+                st.rerun()
+            st.divider()
+            render_chat(config_vars, target_vars)
+        else:
+            if st.button("💬", key="nbedl_chat_open_btn", help="분석 도우미 열기"):
+                st.session_state[OPEN_KEY] = True
+                st.rerun()
+    components.html(_CHAT_CSS.replace("%ANCHOR%", CHAT_ANCHOR_ID), height=0)

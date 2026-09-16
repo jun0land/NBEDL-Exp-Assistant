@@ -338,6 +338,40 @@ def render_composite_optimum(config_vars, target_vars, key_prefix="mobo", floors
             "하나에 좌우되고 있으므로, 대표값을 바꿔 보면 순위가 뒤집히는지 확인해 보세요. "
             "순위가 뒤집힌다면 그 차이는 아직 이 데이터로 가릴 수 없는 것입니다."
         )
+    # ---- 대표값 민감도 ----
+    # 대표값을 바꾸려고 라디오를 왔다 갔다 하면 두 결과를 나란히 볼 수 없어, 정작 알고 싶은
+    # "순위가 뒤집히는가"를 놓친다. 세 가지를 한 번에 계산해 옆으로 붙여 놓는다.
+    sens = {}
+    for _m, _ in AGG_MODES:
+        _t = _condition_table(valid, cfg_names, sel_tvs, agg=_m)
+        _ok, _ = _floor_verdict(_t, sel_tvs, floors)
+        _p = _t[_ok]
+        if _p.empty:
+            continue
+        _sc = pd.DataFrame({tv["Name"]: desirability_scored(
+            _p[tv["Name"]], tv, floor=floors.get(tv["Name"])) for tv in sel_tvs}, index=_p.index)
+        _c = pd.Series(composite_score(_sc[cols].to_numpy(dtype=float), w, mode=mode), index=_p.index)
+        _key = _p[cfg_names].astype(str).agg(" · ".join, axis=1)
+        sens[AGG_LABEL[_m].split(" (")[0]] = pd.Series(_c.values, index=_key.values)
+    if len(sens) >= 2:
+        S = pd.DataFrame(sens)
+        R = S.rank(ascending=False, method="min").astype("Int64")
+        disp = pd.DataFrame({"조건": S.index})
+        for c in S.columns:
+            disp[c] = [f"{v:.3f} ({int(r)}위)" if pd.notna(v) else "—"
+                       for v, r in zip(S[c], R[c])]
+        disp = disp.iloc[S.iloc[:, 0].fillna(-1).argsort()[::-1]]
+        flipped = bool((R.nunique(axis=1) > 1).any())
+        st.markdown("**🔁 대표값을 바꾸면** — 같은 목표·같은 종합 방식에서 대표값만 갈아 끼운 결과입니다.")
+        st.dataframe(disp, use_container_width=True, hide_index=True)
+        if flipped:
+            st.warning(
+                "대표값에 따라 **순위가 뒤집히는 조건이 있습니다.** 그 조건들 사이의 차이는 "
+                "지금 데이터로 가릴 수 없습니다. 가리려면 같은 조건을 여러 배치에 걸쳐 반복해야 합니다."
+            )
+        else:
+            st.success("세 가지 대표값 모두에서 **순위가 같습니다.** 이 순위는 이상치 한두 개에 좌우되지 않습니다.")
+
     st.caption(
         f"목표값은 같은 조건의 반복 시료를 **{AGG_LABEL[agg].split(' (')[0]}**으로 묶은 대표값입니다. "
         f"종합점수는 각 목표를 방향에 맞춰 0~1(최선=1)로 매긴 desirability 를 **{dict(COMPOSITE_MODES)[mode].split(' (')[0]}**으로 합친 값입니다. "
